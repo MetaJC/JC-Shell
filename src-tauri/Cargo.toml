@@ -1,0 +1,149 @@
+[package]
+name = "jc-shell"
+version = "0.3.3"
+description = "JC Shell — 跨平台 SSH 终端 + AI 助手"
+authors = ["OpenJC"]
+homepage = "https://www.openjc.cc"
+repository = "https://gitee.com/Open-JC/jc-shell-community"
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "jc_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-os = "2.0"
+tauri-plugin-shell = "2.0"
+tauri-plugin-opener = "2.0"
+tauri-plugin-clipboard-manager = "2.0"
+# 自定义 URL scheme（jc-shell://），供浏览器授权页唤起本应用
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+once_cell = "1"
+
+# 数据库 + 配置
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+
+# AI 调用（M3 启用）
+# reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+futures-util = "0.3"
+# bytes = "1"
+
+# SSH
+russh = "0.50"
+# SFTP 子系统（大文件流式传输，替代 base64 exec 通道）
+russh-sftp = "2.4"
+
+# Base64（文件传输流式编解码）
+base64 = "0.22"
+
+# 文本编码检测/转换（远程文本编辑器的编码选择）
+encoding_rs = "0.8"
+
+# 目录压缩包下载：服务端 tar 打包后本地解包
+tar = "0.4"
+tokio-util = { version = "0.7", features = ["compat"] }
+
+# OAuth 客户端 + OS KeyChain + PKCE + HTTP
+rand = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+# AI Agent 危险命令规则匹配
+regex = "1"
+# app_setting 值透明加密（AES-256-GCM，AES-NI 硬件加速）
+aes-gcm = "0.10"
+# 滑块验证码（AJ-Captcha）坐标加密：AES-128/192/256-ECB + PKCS7。
+# 注意：aes 0.8 已由 aes-gcm 0.10 作为传递依赖缓存，离线构建可直接复用。
+aes = "0.8"
+url = "2"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+
+# keyring v3 默认不带任何平台后端，必须按 target 显式开启，否则会静默回退到
+# 内存 mock（set 返回 Ok 但 get 永远 NoEntry），导致安全密码无法真正持久化。
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+# 移动端专属依赖：桌面端不引入，保证 PC 端依赖与解锁路径（仅 PIN）完全不变。
+# 生物识别（指纹 / 人脸）：官方插件，Android 侧用 androidx.biometric 的 BiometricPrompt，
+# iOS 侧用 LocalAuthentication；原生代码随插件 crate 自动装配进 Gradle，不落在 gen/ 里
+#（gen/ 不入库且会被 `tauri android init` 重建，手写的原生代码会被抹掉）。
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+tauri-plugin-biometric = "2"
+
+# 桌面平台专属依赖：iOS/Android 移动端不适用，按 target 排除，
+# 保证 PC 端依赖与功能完全不变。
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+# 单实例保护：重复启动时激活已有实例并退出新进程，
+# 避免第二个实例因 WebView2 用户数据目录被占用（ERROR_BUSY）产生空白无响应窗口。
+# deep-link feature：新进程收到的 jc-shell:// 协议参数会被识别并转发给已运行实例。
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# 原生文件对话框（数据导出另存为）
+rfd = "0.15"
+# 本地 PTY（本地终端）
+portable-pty = "0.8"
+# 本机系统信息（本地终端的设备信息面板，跨平台）
+sysinfo = "0.31"
+# 全局鼠标位置/按键查询（Tab 拖拽浮层跨窗口跟随，跨平台）
+device_query = "2"
+
+[features]
+# custom-protocol 绝不能放进 default：它等于「生产模式」开关（加载嵌入的
+# dist 资产）。v2 的 `tauri dev` 不会禁用 default 特性，一旦默认开启，
+# dev 运行的也是嵌入快照——界面永远是上次构建的旧前端，vite dev server
+# 完全不被使用（无 HMR）。`tauri build` 会自动附加该特性，无需手动开启。
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+# 版本标识 feature：由依赖本 crate 的外部工程按需启用（启用时切换 Rust 侧品牌文案，如原生菜单）。
+pro-edition = []
+
+# 注意：
+# 1. [profile.release] 已上移至 workspace 根 Cargo.toml（workspace 中成员 crate 的
+#    profile 配置会被 Cargo 忽略）。
+# 2. 下方 [patch.crates-io] 保留在本文件：公开仓（subtree 拆分自本目录）是独立工程、
+#    没有 workspace 根，需要这份 patch 让 vendor 补丁生效；workspace 根 Cargo.toml
+#    另有一份相同 patch 供另一构建目标使用，两份并存无害。
+# 3. Cargo.lock：本文件旁的 lock 与 workspace 根 lock 内容一致，已入库（公开仓需要）；
+#    workspace 内构建时以根 lock 为准，本文件旁的 lock 不参与解析。
+
+# 仅 Windows：WebView2 的 COM 绑定，用于在运行时调 AreDevToolsEnabled = false 彻底禁用 DevTools。
+# Tauri 2 在 debug 构建中默认启用 DevTools 且运行时 API 无法关闭，必须走原生 WebView2 接口。
+[target.'cfg(target_os = "windows")'.dependencies]
+# 版本必须与 tauri/wry 使用的一致（0.38.x），否则类型互不兼容、无法 QueryInterface
+webview2-com = "0.38"
+# 仅用于把 ICoreWebView2Settings 转成 Settings3 以调用 SetAreBrowserAcceleratorKeysEnabled
+# （禁用 Ctrl+Shift+I / F12 等浏览器加速键）
+windows-core = "0.61"
+# keyring v3 必须显式启用 Windows 原生凭据管理器后端，否则会静默回退到内存 mock。
+keyring = { version = "3", features = ["windows-native"] }
+
+# ===== 移动端编译修补（iOS 专属，桌面/安卓零影响） =====
+# russh-cryptovec 0.50.2 的 unix.rs 仅特判了 macos，把 iOS 错误归入 glibc 的
+# `__errno_location`（Apple 平台不存在），导致 iOS 交叉编译失败。这里用本地 vendor
+# 副本打补丁（iOS 改走 `__error()`），Linux/Android/桌面三端行为与原 upstream 完全一致。
+# 该 patch 对所有 target 生效，但仅改变 iOS 分支，故 PC 端产物字节级不变。
+[patch.crates-io]
+russh-cryptovec = { path = "vendor/russh-cryptovec-0.50.2" }
+# 生物识别插件 fork（仅 Android 代码有差异，Rust 侧仅新增两个字段）：
+# 上游把认证强度硬编码为 BIOMETRIC_WEAK，无法实现「只用指纹」与「人脸失败后改用指纹」。
+# 补丁内容：AuthOptions.allowedAuthenticators（weak/strong）+ status 回传 biometryTypes（全部模态）。
+# 升级插件时必须重新套用这两处改动（见 vendor/tauri-plugin-biometric-2.3.3 内注释）。
+tauri-plugin-biometric = { path = "vendor/tauri-plugin-biometric-2.3.3" }
+

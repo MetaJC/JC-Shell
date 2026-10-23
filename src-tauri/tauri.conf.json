@@ -1,0 +1,119 @@
+{
+    "$schema":  "https://schema.tauri.app/config/2",
+    "productName":  "JC Shell",
+    "version": "0.3.3",
+    "identifier":  "cc.openjc.jcshell",
+    "build":  {
+                  "beforeDevCommand":  "npm run dev",
+                  "devUrl":  "http://127.0.0.1:1420",
+                  "beforeBuildCommand":  "npm run build",
+                  "frontendDist":  "../dist"
+              },
+    "app":  {
+                "windows": [
+    {
+        "label": "main",
+            "title": "JC Shell",
+            "width": 1280,
+            "height": 800,
+            "minWidth": 800,
+            "minHeight": 500,
+            "resizable": true,
+            "fullscreen": false,
+            "decorations": true,
+            "titleBarStyle": "Overlay",
+            "hiddenTitle": true,
+            "transparent": false,
+            "visible": false,
+            "backgroundColor": "#1f1f23",
+            "devtools": false
+    },
+    {
+        "label": "settings",
+        "title": "JC Shell - 设置",
+        "url": "/settings",
+        "width": 980,
+        "height": 700,
+        "minWidth": 720,
+        "minHeight": 520,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "visible": false,
+                    "center": true,
+                    "devtools": false
+            }
+],
+                "security":  {
+                                 "csp":  "default-src \u0027self\u0027; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://localhost:* wss://localhost:* https://*; img-src \u0027self\u0027 asset: https://asset.localhost data: https:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; font-src \u0027self\u0027 data:; frame-src \u0027self\u0027 https: http:;",
+                                 "assetProtocol":  {
+                                                       "enable":  true,
+                                                       "scope":  [
+                                                                     "**"
+                                                                 ]
+                                                   }
+                             }
+            },
+    "bundle":  {
+                   "active":  true,
+                   "targets":  "all",
+                   "icon":  [
+                                "icons/32x32.png",
+                                "icons/128x128.png",
+                                "icons/128x128@2x.png",
+                                "icons/icon.icns",
+                                "icons/icon.ico"
+                            ],
+                   "category":  "DeveloperTool",
+                   "shortDescription":  "JC Shell — SSH Terminal with AI Assistant",
+                   "longDescription":  "跨平台高性能 SSH 终端 + AI 助手，支持本地 Ollama 与远程大模型。",
+                   "copyright":  "Copyright (c) 2026 JC",
+                   "windows":  {
+                                   "nsis":  {
+                                                "languages":  [
+                                                                  "SimpChinese",
+                                                                  "English"
+                                                              ],
+                                                "displayLanguageSelector":  false,
+                                                "installerIcon":  "icons/icon.ico",
+                                                "installMode":  "currentUser",
+                                                "installerHooks":  "windows/hooks.nsh"
+                                            }
+                               },
+                   "macOS":  {
+                                  "minimumSystemVersion":  "10.15",
+                                  "exceptionDomain":  "",
+                                  "frameworks":  [],
+                                  "providerShortName":  null,
+                                  "signingIdentity":  null,
+                                  "dmg":  {
+                                              "windowSize":  {
+                                                                "width":  660,
+                                                                "height":  400
+                                                             }
+                                          }
+                              },
+                   "linux":  {
+                                 "deb":  {
+                                            "depends":  []
+                                        },
+                                 "rpm":  {
+                                            "depends":  [],
+                                            "release":  "1"
+                                        },
+                                 "appimage":  {
+                                                  "bundleMediaFramework":  false
+                                              }
+                             }
+               },
+    "plugins":  {
+                    "deep-link":  {
+                                      "desktop":  {
+                                                      "schemes":  [
+                                                                      "jc-shell"
+                                                                  ]
+                                                  }
+                                  }
+                }
+}

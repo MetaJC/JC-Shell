@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "移动端专属能力：生物识别解锁（指纹 / 人脸）。桌面端不引入 tauri-plugin-biometric，该权限在 PC 构建里是未定义的 —— 故用 platforms 限定只在 Android/iOS 生效，避免桌面端 ACL 校验直接报未知权限。",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["biometric:default"]
+}

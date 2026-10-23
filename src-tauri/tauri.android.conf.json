@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "app": {
+        "windows": [
+            {
+                "label": "main",
+                "title": "JC Shell",
+                "width": 1280,
+                "height": 800,
+                "resizable": true,
+                "fullscreen": false,
+                "visible": false,
+                "backgroundColor": "#1f1f23",
+                "devtools": false
+            }
+        ]
+    },
+    "plugins": {
+        "deep-link": {
+            "mobile": [
+                {
+                    "scheme": [
+                        "jc-shell"
+                    ],
+                    "appLink": false
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,363 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 全局主题变量（亮色默认 / 暗色覆盖 / 护眼色） ===== */
+:root,
+[data-theme='light'] {
+  --jc-bg: #f5f5f7;
+  --jc-bg-soft: #ebebec;
+  --jc-bg-panel: #fafafa;
+  --jc-bg-hover: #e5e5ea;
+  --jc-border: #d2d2d7;
+  --jc-border-strong: #b5b5bb;
+  --jc-text: #1d1d1f;
+  --jc-text-soft: #3a3a3c;
+  --jc-text-muted: #6e6e73;
+  --jc-accent: #007aff;
+  --jc-danger: #ff3b30;
+  --jc-success: #34c759;
+  --jc-warn: #ff9500;
+  --jc-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.12);
+  --jc-terminal-bg: #2b2b2d;
+  --jc-terminal-fg: #e5e7eb;
+  --jc-split-line: #c7c7cc;
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --jc-bg: #1e1e1e;
+  --jc-bg-soft: #252526;
+  --jc-bg-panel: #252526;
+  --jc-bg-hover: #2d2d30;
+  --jc-border: #3e3e42;
+  --jc-border-strong: #4b5563;
+  --jc-text: #e5e7eb;
+  --jc-text-soft: #b8b4ac;
+  --jc-text-muted: #9ca3af;
+  --jc-accent: #60a5fa;
+  --jc-danger: #f87171;
+  --jc-success: #34d399;
+  --jc-warn: #fbbf24;
+  --jc-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+  --jc-terminal-bg: #2b2b2d;
+  --jc-terminal-fg: #e5e7eb;
+  --jc-split-line: #4a4a4e;
+  color-scheme: dark;
+}
+
+/* 护眼色主题（绿豆沙色） */
+[data-theme='eye-care'] {
+  --jc-bg: #e8f0e2;
+  --jc-bg-soft: #dde8d5;
+  --jc-bg-panel: #f0f5ea;
+  --jc-bg-hover: #d5e0cc;
+  --jc-border: #c5d0bc;
+  --jc-border-strong: #a8b59f;
+  --jc-text: #2d3a28;
+  --jc-text-soft: #4a5a42;
+  --jc-text-muted: #7a8a72;
+  --jc-accent: #5b8a4e;
+  --jc-danger: #c45c5c;
+  --jc-success: #4e8a5b;
+  --jc-warn: #c9a055;
+  --jc-shadow: 0 10px 30px -10px rgba(50, 80, 40, 0.15);
+  --jc-terminal-bg: #3d4d35;
+  --jc-terminal-fg: #e8f0e2;
+  --jc-split-line: #b5c2ac;
+  color-scheme: light;
+}
+
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  overflow: hidden;
+  background-color: var(--jc-bg);
+  color: var(--jc-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ===== Element Plus 弹层置顶（全局，所有窗口共用，含独立设置窗口） =====
+   EP 弹层（对话框遮罩）默认 z-index 约 2000，会被应用自身的高层（zen 拖拽条/遮罩 9999、
+   头像锚点 INT_MAX）盖住，出现"界面变灰但弹窗看不见"。统一把 overlay 层抬到所有业务层之上。
+   注意：原写在 MainWindow.vue 的 <style> 里，只有主窗口 webview 加载得到；独立设置窗口是
+   另一个 webview，拿不到这条规则，导致"安全设置页里的密码验证弹窗"在切回应用时被设置页压在底下。
+   下沉到这里（main.ts 全局导入）后，所有窗口的安全验证弹窗都恒为最顶层。 */
+.el-overlay { z-index: 10000 !important; }
+/* 安全密码验证弹窗：必须盖住所有业务弹层（编辑端口转发弹窗 10000、远程客户端配置面板
+   rc-mask 10003、会话列表 sp-mask 10010 等）。例如在 rc 面板里点密码框的小眼睛会触发安全验证，
+   若低于 10003 会被面板挡住。MessageBox（10013）与 ElMessage（10014）仍需高于本层——
+   安全弹窗内触发的「抹除会话数据」确认框和"密码错误"提示都要浮在它上面 */
+.el-overlay.sec-overlay { z-index: 10012 !important; }
+/* MessageBox 确认框（含安全弹窗内触发的「抹除会话数据」确认）始终盖过普通弹窗与安全验证弹窗 */
+.el-overlay.is-message-box { z-index: 10013 !important; }
+.el-message { z-index: 10014 !important; }
+
+* {
+  box-sizing: border-box;
+}
+
+/* 全局链接 / 按钮 hover 使用 --jc-accent */
+a,
+.accent-text { color: var(--jc-accent); }
+
+/* 移动端连接会话「连接中」过渡遮罩淡入淡出 */
+.jc-connect-fade-enter-active,
+.jc-connect-fade-leave-active { transition: opacity 0.3s ease; }
+.jc-connect-fade-enter-from,
+.jc-connect-fade-leave-to { opacity: 0; }
+button.accent,
+.btn-accent {
+  background-color: var(--jc-accent);
+  border-color: var(--jc-accent);
+  color: white;
+}
+button.accent:hover,
+.btn-accent:hover {
+  filter: brightness(1.05);
+}
+button.outline-accent {
+  border: 1px solid var(--jc-accent);
+  color: var(--jc-accent);
+  background: transparent;
+}
+.accent-underline { border-bottom: 2px solid var(--jc-accent); }
+
+/* 强调色（主题色）作用于 Element Plus 常用变量 */
+:root, html, body, #app, .el-text, .el-button, .el-input__wrapper {
+  --el-color-primary: var(--jc-accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--jc-accent) 70%, #ffffff);
+  --el-color-primary-light-5: color-mix(in srgb, var(--jc-accent) 50%, #ffffff);
+  --el-color-primary-light-7: color-mix(in srgb, var(--jc-accent) 30%, #ffffff);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--jc-accent) 85%, #000000);
+  --el-border-color: var(--jc-border);
+  --el-border-color-light: var(--jc-border);
+  --el-fill-color-blank: var(--jc-bg-panel);
+  --el-bg-color: var(--jc-bg);
+  --el-bg-color-page: var(--jc-bg-soft);
+  --el-text-color-primary: var(--jc-text);
+  --el-text-color-regular: var(--jc-text-soft);
+  --el-text-color-secondary: var(--jc-text-muted);
+  --el-mask-color: rgba(0, 0, 0, 0.45);
+  --el-overlay-color: rgba(0, 0, 0, 0.45);
+}
+
+/* 滚动条颜色跟随主题 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--jc-border-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--jc-text-muted);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 指针拖拽排序中：抓取光标 + 禁止文本选中 */
+body.drag-sorting,
+body.drag-sorting * {
+  cursor: grabbing !important;
+}
+body.drag-sorting {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* 窗口拖拽中（自定义标题栏拖动窗口）：冻结页面交互与动画。
+   否则 WebView 在窗口移动时持续做 hover 重算/过渡/逐帧动画重绘，导致拖拽卡顿 */
+body.window-dragging #app {
+  pointer-events: none !important;
+}
+body.window-dragging *,
+body.window-dragging *::before,
+body.window-dragging *::after {
+  transition: none !important;
+  animation-play-state: paused !important;
+}
+/* 注意：拖拽期间不再对 xterm/文件系统/设备信息等子树做 visibility:hidden。
+   此前为降低 WebView 拖窗重绘开销会隐藏这些子树，但表现为"一拖窗口终端、文件
+   列表、设备信息里的文字全部消失"，体验很差。改为只冻结指针事件与过渡/动画
+   （上面的 body.window-dragging * 规则），内容保持可见。 */
+
+/* ===== 折叠/展开内容切换：统一淡入淡出，避免"干蹦蹦"地突然出现/消失 =====
+   用法：<Transition name="jc-swap"> 包住内容区(展开态)与折叠条(折叠态)。
+   进入略带延迟，让"先淡出旧内容、再淡入折叠条"更有层次。
+   拖窗口时由 body.window-dragging 的 transition:none 自动冻结，无需额外处理。 */
+.jc-swap-enter-active { transition: opacity 0.16s ease 0.06s; }
+.jc-swap-leave-active { transition: opacity 0.1s ease; }
+.jc-swap-enter-from,
+.jc-swap-leave-to { opacity: 0; }
+
+/* ===== Element Plus 通用组件覆盖：确保弹窗/下拉/选项/菜单跟随主题 ===== */
+.el-dialog,
+.el-message-box,
+.el-drawer {
+  background-color: var(--jc-bg-panel) !important;
+  border: 1px solid var(--jc-border) !important;
+  color: var(--jc-text) !important;
+}
+.el-dialog__header,
+.el-message-box__header,
+.el-drawer__header {
+  border-bottom: 1px solid var(--jc-border) !important;
+  color: var(--jc-text) !important;
+  background-color: var(--jc-bg-panel) !important;
+}
+.el-dialog__title,
+.el-message-box__title,
+.el-drawer__title {
+  color: var(--jc-text) !important;
+}
+.el-dialog__body,
+.el-message-box__content,
+.el-drawer__body {
+  color: var(--jc-text-soft) !important;
+}
+/* 内容区补不透明背景。
+   上面的 header 和下面的 footer 都有 background-color，唯独 body 只设了文字色，
+   于是 body 区域完全依赖 .el-dialog 自身的背景。
+   配合 .jc-dialog .el-dialog__body 的负外边距（见 MainWindow.vue / HostListPanel.vue）：
+   Element Plus 的 .el-dialog 自带 padding:16px，header/body/footer 被整体内缩，
+   形成一圈只有 .el-dialog 自身背景能画到的条带；新建会话弹窗切换「认证方式」改变
+   高度后，这圈条带会残留未重绘的空洞、透出下层文件面板（能看到文件列表的「r-x」
+   权限文字）。让 body 撑满整宽再加上这层背景，即可把这圈条带一起盖住。
+   安全性：body 上下相邻的是 header 与 footer，本身不与弹窗圆角相交，
+   因此给它加矩形背景不会把弹窗的圆角填成直角。 */
+.el-dialog__body,
+.el-drawer__body {
+  background-color: var(--jc-bg-panel) !important;
+}
+.el-dialog__footer,
+.el-message-box__btns,
+.el-drawer__footer {
+  border-top: 1px solid var(--jc-border) !important;
+  background-color: var(--jc-bg-panel) !important;
+}
+.el-dialog__headerbtn .el-dialog__close,
+.el-message-box__headerbtn .el-message-box__close {
+  color: var(--jc-text-muted) !important;
+}
+.el-dialog__headerbtn:hover .el-dialog__close,
+.el-message-box__headerbtn:hover .el-message-box__close {
+  color: var(--jc-text) !important;
+}
+.el-message-box__message,
+.el-message-box__message p {
+  color: var(--jc-text-soft) !important;
+}
+.el-message-box__input,
+.el-message-box__input input {
+  background-color: var(--jc-bg) !important;
+  color: var(--jc-text) !important;
+  border-color: var(--jc-border) !important;
+  box-shadow: 0 0 0 1px var(--jc-border) inset !important;
+}
+
+/* 下拉选择 / 级联 / 自动补全 弹出层 */
+.el-select-dropdown,
+.el-cascader-menu,
+.el-autocomplete-suggestion,
+.el-popper,
+.el-dropdown-menu,
+.el-tooltip__popper {
+  background-color: var(--jc-bg-panel) !important;
+  border: 1px solid var(--jc-border) !important;
+  color: var(--jc-text) !important;
+}
+.el-select-dropdown__item,
+.el-cascader-node,
+.el-autocomplete-suggestion li,
+.el-dropdown-menu__item {
+  color: var(--jc-text-soft) !important;
+}
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover,
+.el-cascader-node:hover,
+.el-autocomplete-suggestion li:hover,
+.el-dropdown-menu__item:hover {
+  background-color: var(--jc-bg-hover) !important;
+  color: var(--jc-text) !important;
+}
+.el-select-dropdown__item.selected,
+.el-cascader-node.is-active,
+.el-autocomplete-suggestion li.highlighted,
+.el-dropdown-menu__item.is-active {
+  color: var(--jc-accent) !important;
+  font-weight: 600;
+}
+.el-select-dropdown__empty,
+.el-autocomplete-suggestion__empty {
+  color: var(--jc-text-muted) !important;
+}
+
+/* 输入框 / 选择器 内部 */
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner,
+.el-input-number__decrease,
+.el-input-number__increase {
+  background-color: var(--jc-bg) !important;
+  box-shadow: 0 0 0 1px var(--jc-border) inset !important;
+  color: var(--jc-text) !important;
+}
+.el-input__inner,
+.el-textarea__inner,
+.el-select__placeholder,
+.el-select__selected-item {
+  color: var(--jc-text) !important;
+}
+.el-select__placeholder,
+.el-input__inner::placeholder,
+.el-textarea__inner::placeholder {
+  color: var(--jc-text-muted) !important;
+}
+
+/* 按钮 / Tabs / 标签页 */
+.el-tabs__item {
+  color: var(--jc-text-soft) !important;
+}
+.el-tabs__item.is-active {
+  color: var(--jc-accent) !important;
+}
+.el-tabs__active-bar {
+  background-color: var(--jc-accent) !important;
+}
+.el-tabs__nav-wrap::after {
+  background-color: var(--jc-border) !important;
+}
+
+/* 表格 */
+.el-table {
+  --el-table-bg-color: var(--jc-bg) !important;
+  --el-table-tr-bg-color: var(--jc-bg) !important;
+  --el-table-header-bg-color: var(--jc-bg-soft) !important;
+  --el-table-border-color: var(--jc-border) !important;
+  --el-table-text-color: var(--jc-text) !important;
+  --el-table-header-text-color: var(--jc-text-soft) !important;
+  --el-table-row-hover-bg-color: var(--jc-bg-hover) !important;
+  color: var(--jc-text) !important;
+  background-color: var(--jc-bg) !important;
+}
+.el-table th.el-table__cell {
+  background-color: var(--jc-bg-soft) !important;
+  color: var(--jc-text-soft) !important;
+}
+.el-table tr:hover > td.el-table__cell {
+  background-color: var(--jc-bg-hover) !important;
+}
+
+/* ===== 洞口吸入光效 ===== */
+.suck-light{position:relative;z-index:10;width:30px;align-self:stretch;flex-shrink:0;margin-left:-30px;overflow:hidden;pointer-events:none;-webkit-mask-image:linear-gradient(to right,transparent,black 55%);mask-image:linear-gradient(to right,transparent,black 55%)}
+.suck-light__glow{position:absolute;inset:0;mix-blend-mode:screen;background:radial-gradient(120% 90% at 100% 50%,rgba(59,130,246,0.32),rgba(59,130,246,0.08) 55%,transparent 78%);animation:suck-breathe 2.4s ease-in-out infinite;will-change:opacity;transform:translateZ(0)}
+@keyframes suck-breathe{0%,100%{opacity:.55}50%{opacity:1}}
+.suck-light--left{margin-left:0;margin-right:-30px;-webkit-mask-image:linear-gradient(to left,transparent,black 55%);mask-image:linear-gradient(to left,transparent,black 55%)}
+.suck-light--left .suck-light__glow{background:radial-gradient(120% 90% at 0% 50%,rgba(59,130,246,0.32),rgba(59,130,246,0.08) 55%,transparent 78%)}

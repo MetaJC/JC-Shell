@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- JC Shell fork 扩展：「只认指纹」走已废弃但仍在的 FingerprintManager，需要该权限 -->
+  <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+  <application>
+    <activity
+      android:name=".BiometricActivity"
+      android:label="BiometricActivity"
+      android:theme="@style/AppTheme.Transparent"/>
+    <activity
+      android:name=".FingerprintActivity"
+      android:label="FingerprintActivity"
+      android:theme="@style/AppTheme.Transparent"/>
+  </application>
+</manifest>

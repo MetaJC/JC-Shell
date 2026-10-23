@@ -1,0 +1,1969 @@
+/**
+ * 移动端布局覆盖（Android / iOS WebView）
+ * 作者：JC
+ *
+ * 设计原则：
+ *  1. 所有规则一律以 `html.jc-platform-mobile` 开头 —— 桌面端永远不会命中，
+ *     与 PC 端样式完全隔离（根类由 main.ts 依据 isMobileWebview() 注入）。
+ *  2. 只调整「布局 / 尺寸 / 可见性」，不改任何业务逻辑，因此不产生分叉代码。
+ *  3. 移动端信息架构（与桌面三栏完全不同）：
+ *     - 底部导航 5 项：会话 / 终端 / 仪表盘 / SFTP / 我的（组件见 layout/MobileTabBar.vue）；
+ *     - 终端页不再挂载三块停靠面板（会话 / 设备信息 / 文件系统改由底部导航的独立页面承载）；
+ *     - 设置面板：左侧竖排菜单 → 顶部横向可滚动 Tab；
+ *     - 终端悬浮按钮：只留「AI Agent / 精简模式」（全屏、重连为桌面专属，由 CAP 能力开关去掉）。
+ */
+
+/* ========== 0. 安全区 ==========
+   ⚠️ 前提：index.html 的 viewport 必须带 `viewport-fit=cover`。
+   否则 iOS 会把页面缩进到安全区内（底部出现黑边），且 env(safe-area-inset-*) 恒为 0，
+   下面的兜底值会被误用 —— 表现就是「底部导航离屏幕底太远 + 下方一条黑边」。
+
+   顶部：Tauri Android 的 WebView 铺到屏幕最顶端（window frame = [0,0]-[1080,2400]），
+   而系统可用区从状态栏下方开始（mAppBounds.top ≈ 136px @420dpi ≈ 52 CSS px）。
+   不预留会让首个元素被状态栏遮挡、点击也被状态栏抢走。
+   底部：手势条 / 虚拟导航栏同理，由底部导航栏自己加内边距避让。
+   兼容性：iPhone 上 env(safe-area-inset-bottom) ≈ 34px（背景铺满到底、图标自动抬高避让手势条）；
+   Android/华为 env() 为 0 → 用 max() 兜底的 14px，保持紧密贴底（与改造前一致）。 */
+html.jc-platform-mobile {
+  /* 顶部：状态栏。部分机型 / 兼容层（如鸿蒙卓易通）里 env() 会返回 0，
+     用 max() 兜一个最小值，保证首屏内容不会被状态栏压住（在真机上再下移「一点点」） */
+  --jc-mobile-top-inset: max(env(safe-area-inset-top, 0px), 54px);
+  /* 底部：手势横线 / 虚拟导航条。同理兜底 14px，
+     否则底部导航栏会贴死在屏幕最底边、被手势横线压住 */
+  --jc-mobile-bottom-inset: max(env(safe-area-inset-bottom, 0px), 14px);
+}
+html.jc-platform-mobile .layout-root {
+  padding-top: var(--jc-mobile-top-inset);
+}
+/* 底部导航横排在窗口底部 → 布局体改为纵向：页面区吃满剩余高度，导航栏贴在最后 */
+html.jc-platform-mobile .layout-body { flex-direction: column; }
+
+/* ========== 1. 顶部标题栏：移动端整体隐藏 ==========
+   移动端不使用桌面菜单栏（文件/编辑/视图/终端/工具/帮助）——手机宽度下既挤不下、
+   也不符合移动端交互习惯。所有设置与功能入口统一收敛到「我的」页与设置面板。
+   注：用 display:none 而非改模板，保持单代码路径，桌面不受影响。 */
+html.jc-platform-mobile .window-title-bar { display: none !important; }
+
+/* ========== 2. 停靠面板与分隔条：移动端不渲染 / 不可拖拽 ==========
+   三块停靠面板改由底部导航的独立页面承载，TerminalPage 已通过 CAP.dockPanels()
+   直接不挂载（面板内有设备指标与 SFTP 目录轮询，仅 CSS 隐藏会让它们后台空转）；
+   这里的 display:none 是第二道保险，防止极端时序下先渲染出一帧。
+   分屏分隔条依赖鼠标拖拽调尺寸，触摸端隐藏。 */
+html.jc-platform-mobile .panel-aside,
+html.jc-platform-mobile .dock-bottom { display: none !important; }
+html.jc-platform-mobile .dock-center-top { height: 100% !important; }
+html.jc-platform-mobile .split-bar { display: none !important; }
+/* 面板头部的拖拽手柄 / 折叠按钮同理无意义（会话页复用 HostListPanel，故需隐藏） */
+html.jc-platform-mobile .panel-header__grip,
+html.jc-platform-mobile .panel-header__collapse { display: none !important; }
+/* 头部高度改为自适应：桌面固定 32px，放不下移动端 46px 的命名空间下拉框，
+   会「溢出容器」压住下面的列表首行 —— 这里按控件高度撑开 */
+html.jc-platform-mobile .panel-header {
+  height: auto;
+  min-height: 56px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+/* 折叠态仍是紧凑的 24px 图标行（覆盖上面的自适应高度） */
+html.jc-platform-mobile .panel-header.panel-header--collapsed {
+  height: 24px;
+  min-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* ========== 3. 设置弹窗：单独避让状态栏并铺满宽度 ==========
+   （Teleport 到 body，不在 .layout-root 内，拿不到上面的 padding，必须自己处理）
+   移动端按「整页」呈现：隐藏 el-dialog 自带标题栏（设置 + 右上角叉号），
+   关闭依赖系统返回手势/返回键；页脚「关闭/确认」在组件模板里对移动端隐藏。 */
+html.jc-platform-mobile .jc-settings-dialog {
+  /* 用 100% 而不是 100vw：vw 把滚动条槽也算进宽度，一旦出现占位式滚动条会横向溢出 */
+  width: 100% !important;
+  max-width: 100% !important;
+  /* EP 给 .el-dialog 根节点写死 16px 内边距：不加这条，总高度 =
+     margin-top + (100vh - margin-top) + 32px > 100vh，页面被顶出滚动条 */
+  padding: 0 !important;
+  margin: var(--jc-mobile-top-inset) 0 0 0 !important;
+}
+/* 移动端整页应用不允许页面级滚动（滚动只发生在设置内容区等内部容器） */
+html.jc-platform-mobile,
+html.jc-platform-mobile body {
+  overflow: hidden !important;
+  height: 100% !important;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-dialog__header { display: none !important; }
+html.jc-platform-mobile .jc-settings-dialog .el-dialog__body {
+  height: calc(100vh - var(--jc-mobile-top-inset)) !important;
+  max-height: calc(100vh - var(--jc-mobile-top-inset)) !important;
+}
+
+/* ========== 4. 设置面板：分级页面导航 ==========
+   移动端交互约定：一级 = 设置分组列表页（组件内 m-set-root 渲染），
+   点击进入二级详情页（头部带返回键）。桌面左侧菜单在移动端整体不渲染，
+   旧的「顶部 Tab」方案已废弃。 */
+html.jc-platform-mobile .settings-sidebar { display: none !important; }
+/* 二级页头部：返回键 + 标题水平排列 */
+html.jc-platform-mobile .jc-settings-dialog .settings-main-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+html.jc-platform-mobile .m-set-back {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--jc-text);
+  font-size: 18px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+html.jc-platform-mobile .m-set-back:active { background: var(--jc-bg-hover); }
+/* 一级分组列表：iOS 设置风格的单元格列表 */
+html.jc-platform-mobile .m-set-root { display: flex; flex-direction: column; }
+html.jc-platform-mobile .m-set-root__cell {
+  height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+  border: 0;
+  border-top: 1px solid var(--jc-border);
+  background: transparent;
+  color: var(--jc-text);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+html.jc-platform-mobile .m-set-root__cell:first-child { border-top: 0; }
+/* 分组边界：不再留空隙 —— 空隙会与上一行连成一体，让该行看起来比其他行高；
+   统一 50px 行高 + 分割线（与桌面菜单一致仅以分组线区分） */
+html.jc-platform-mobile .m-set-root__cell.is-new-group { margin-top: 0; }
+html.jc-platform-mobile .m-set-root__cell:active { background: var(--jc-bg-hover); }
+/* 点按菜单返回一级页后，WebView 会在单元格上残留 focus 外圈（画在单元格
+   外侧，看起来像这一行比别的宽）→ 一律去掉；触摸端也不需要键盘焦点环 */
+html.jc-platform-mobile .m-set-root__cell:focus,
+html.jc-platform-mobile .m-set-root__cell:focus-visible { outline: none !important; }
+html.jc-platform-mobile .m-set-root__icon { color: var(--jc-text-muted); }
+html.jc-platform-mobile .m-set-root__label { flex: 1; min-width: 0; }
+html.jc-platform-mobile .m-set-root__arrow { color: var(--jc-text-muted); opacity: 0.6; }
+
+/* ========== 5. 终端悬浮快捷按钮 ==========
+   移动端渲染「AI Agent / 清屏 / 快捷设置」三个（精简模式换成清屏、全屏与重连
+   由 CAP 能力开关在组件里去掉），因此这里只需补几处触摸端差异。 */
+/* 桌面端默认 40% 透明、悬停恢复 100%；触摸端没有 hover，会一直停在半透明状态 → 常亮 */
+html.jc-platform-mobile .qa-buttons { opacity: 1; }
+/* 提示气泡：移动端按钮组贴右下角，若仍按 left:0 左对齐，气泡会向右溢出屏幕被裁掉
+   （「点击开启 AI Agent 模式」只露出前半句）→ 改为右对齐，气泡向左展开 */
+html.jc-platform-mobile .qa-tip { left: auto; right: 0; }
+/* 箭头仍要对准最左侧的 Agent 按钮中心：移动端按钮组 3 个（30*3 + 6*2 = 102px），
+   首按钮中心距右端 102 - 15 = 87px（桌面 4 个按钮由组件自身规则处理） */
+html.jc-platform-mobile .qa-tip .qa-tip-arrow { left: calc(100% - 87px); }
+/* 悬浮按钮上移：原来 bottom:12px 会压住面板左下角的系统状态条
+   （状态条 bottom:4px、高约 15px，即占到约 19px）→ 抬到 26px 之上让开 */
+html.jc-platform-mobile .term-quick-actions { bottom: 26px; }
+/* 「清屏」按钮的扫把图标（内联 SVG）：block 化避免基线留白，
+   粗细与相邻的 Element Plus 图标观感一致 */
+html.jc-platform-mobile .term-quick-actions .qa-svg { display: block; }
+
+/* 底部系统状态条：横向铺满屏幕宽度。
+   三项指标（CPU / 内存 / 磁盘）设为可伸缩（flex:1），其进度条随之拉伸吃掉余量，
+   于是「四项内容 + 间距」正好撑满左右各留 8px 的整条宽度；
+   网络项按内容定宽靠右收尾，避免 nowrap 下内容超宽被裁掉或相互挤压 */
+html.jc-platform-mobile .term-sys-status {
+  left: 8px;
+  right: 8px;
+  max-width: none;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 10px;
+}
+html.jc-platform-mobile .term-sys-status .sys-cell { gap: 4px; }
+html.jc-platform-mobile .term-sys-status .sys-cell--net { gap: 6px; }
+/* 指标项可伸缩；进度条吃掉剩余空间（百分比模式下数字靠单元格右端） */
+html.jc-platform-mobile .term-sys-status .sys-cell--metric { flex: 1 1 auto; min-width: 0; }
+html.jc-platform-mobile .term-sys-status .sys-cell--net { flex: 0 0 auto; }
+html.jc-platform-mobile .term-sys-status .sys-bar {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 28px;
+}
+html.jc-platform-mobile .term-sys-status .sys-num {
+  width: auto;
+  min-width: 24px;
+  margin-left: auto;
+}
+
+/* 终端 Tab 栏（移动端）：隐藏右侧分屏按钮组 —— 窄屏用不上分屏，还挤占 Tab 空间。
+   隐藏后滚动区改为占满剩余宽度，保证 Tab 溢出时固定的「+」仍贴在最右侧 */
+html.jc-platform-mobile .terminal-tabbar .split-tools { display: none; }
+html.jc-platform-mobile .terminal-tabbar .tab-scroll { flex: 1 1 auto; min-width: 0; }
+/* 移动端 Tab 条整体加高（桌面 h-8 = 32px 太窄，触摸目标不足） */
+html.jc-platform-mobile .terminal-tabbar { height: 44px; }
+html.jc-platform-mobile .terminal-tabbar .tab-item {
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 13px;
+}
+/* 「+」按钮同步放大到触摸友好尺寸 */
+html.jc-platform-mobile .terminal-tabbar .tab-add {
+  width: 36px;
+  height: 36px;
+}
+
+/* ========== 6. 底部导航栏（MobileTabBar） ==========
+   手机 App 惯用形态：图标 + 文字，选中项用强调色。
+   高度 = 内容 54px + 底部安全区内边距（内容用 padding-bottom 让位，避免被手势条压住）。 */
+html.jc-platform-mobile .m-tabbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  height: calc(54px + var(--jc-mobile-bottom-inset));
+  padding-bottom: var(--jc-mobile-bottom-inset);
+  background: var(--jc-bg-soft);
+  border-top: 1px solid var(--jc-border);
+  user-select: none;
+}
+html.jc-platform-mobile .m-tabbar__item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--jc-text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s ease;
+}
+html.jc-platform-mobile .m-tabbar__item:active { background: var(--jc-bg-hover); }
+html.jc-platform-mobile .m-tabbar__item.is-active { color: var(--jc-accent); }
+html.jc-platform-mobile .m-tabbar__icon { pointer-events: none; }
+html.jc-platform-mobile .m-tabbar__label {
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+/* 底部残余空隙兜底：部分机型（env()=0 或 ROM 手势区高于 14px 兜底值）在
+   底部导航栏下方会露出一条未被导航背景覆盖的空隙。用导航栏同色（--jc-bg-soft）
+   铺一条固定条填满，保证导航栏与屏幕底边之间观感连续。仅移动端命中，桌面不受影响。 */
+html.jc-platform-mobile body::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--jc-mobile-bottom-inset);
+  background: var(--jc-bg-soft);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ========== 7. 移动端独立页面骨架（会话 / SFTP / 仪表盘 / 我的 共用） ==========
+   页面组件只负责结构与数据，视觉统一收在这里，避免各页各写一套导致观感不一致。 */
+html.jc-platform-mobile .m-page {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--jc-bg);
+  overflow: hidden;
+}
+/* 页面主体：吃掉导航栏以外的全部高度（覆盖组件自带的 h-full，避免百分比高度歧义） */
+html.jc-platform-mobile .m-page__fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+/* 空态：未连接任何主机时 SFTP / 仪表盘 的占位与引导。
+   文字与按钮按移动端可读尺寸放大（原来 12/14px 文字 + 默认 32px 按钮都偏小） */
+html.jc-platform-mobile .m-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 28px;
+  text-align: center;
+  color: var(--jc-text-muted);
+}
+html.jc-platform-mobile .m-empty__icon { font-size: 52px !important; opacity: 0.5; }
+html.jc-platform-mobile .m-empty__title { font-size: 16px; font-weight: 600; color: var(--jc-text-soft); }
+html.jc-platform-mobile .m-empty__desc { font-size: 14px; line-height: 1.75; }
+html.jc-platform-mobile .m-empty .el-button {
+  margin-top: 10px;
+  height: 44px;
+  padding: 0 24px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+/* 终端页空态（还没有任何标签时）：同样放大图标 / 文案 / 入口按钮 */
+html.jc-platform-mobile .term-empty__icon { font-size: 64px !important; opacity: 0.45; }
+html.jc-platform-mobile .term-empty__text { margin-top: 14px !important; font-size: 15px !important; line-height: 1.75; }
+html.jc-platform-mobile .term-empty__btn {
+  margin-top: 20px !important;
+  height: 44px;
+  padding: 0 24px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+/* 「我的」页：卡片 + 分组列表。
+   整页统一左右各 16px 留白 —— 于是账号卡、每个分组卡、底部「登录 / 退出登录」
+   按钮宽度完全一致，且都不再左右顶到屏幕边（设置项是独立圆角卡片） */
+html.jc-platform-mobile .m-profile { padding: 0 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+html.jc-platform-mobile .m-card {
+  margin-top: 12px;
+  border-radius: 12px;
+  background: var(--jc-bg-soft);
+}
+/* 分组卡：独立圆角卡片。卡片背景画在 ::before 上，顶部让出标题条高度，
+   标题留在卡片外上方（与卡片左缘对齐，与参考的分组样式一致） */
+html.jc-platform-mobile .m-group {
+  position: relative;
+  margin-top: 14px;
+  padding-top: 30px;
+}
+html.jc-platform-mobile .m-group::before {
+  content: '';
+  position: absolute;
+  top: 30px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--jc-bg-soft);
+  border-radius: 12px;
+}
+/* 组内行抬到卡片之上（背景透明，由卡片提供底色） */
+html.jc-platform-mobile .m-group > * { position: relative; z-index: 1; }
+/* 标题条：固定高度，保证 ::before 的 30px 顶边永远对齐标题下缘 */
+html.jc-platform-mobile .m-group__title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--jc-text-muted);
+}
+html.jc-platform-mobile .m-cell {
+  width: 100%;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--jc-text);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 分割线只在行之间（首行不画，避免卡片顶边多一条线） */
+html.jc-platform-mobile .m-cell + .m-cell { border-top: 1px solid var(--jc-border); }
+/* 首尾行跟随卡片圆角，点按高亮不会顶出方角 */
+html.jc-platform-mobile .m-cell:first-of-type { border-radius: 12px 12px 0 0; }
+html.jc-platform-mobile .m-cell:last-of-type { border-radius: 0 0 12px 12px; }
+html.jc-platform-mobile .m-cell:only-of-type { border-radius: 12px; }
+html.jc-platform-mobile .m-cell:active { background: var(--jc-bg-hover); }
+html.jc-platform-mobile .m-cell__icon { flex-shrink: 0; color: var(--jc-text-muted); font-size: 20px !important; }
+html.jc-platform-mobile .m-cell__label { flex: 1; min-width: 0; }
+html.jc-platform-mobile .m-cell__value { font-size: 14px; color: var(--jc-text-muted); }
+html.jc-platform-mobile .m-cell__arrow { flex-shrink: 0; color: var(--jc-text-muted); opacity: 0.6; }
+
+/* 账号卡片（独立圆角卡，与下方分组卡、底部按钮同宽） */
+html.jc-platform-mobile .m-profile__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 14px;
+}
+html.jc-platform-mobile .m-profile__avatar {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--jc-border);
+  background: var(--jc-bg);
+  color: var(--jc-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+}
+html.jc-platform-mobile .m-profile__avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+html.jc-platform-mobile .m-profile__ident { flex: 1; min-width: 0; }
+html.jc-platform-mobile .m-profile__name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--jc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.jc-platform-mobile .m-profile__meta { margin-top: 3px; font-size: 12px; color: var(--jc-text-muted); }
+html.jc-platform-mobile .m-profile__points {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--jc-accent);
+  border: 1px solid var(--jc-accent);
+  border-radius: 10px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+html.jc-platform-mobile .m-profile__spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--jc-border-strong);
+  border-top-color: var(--jc-accent);
+  border-radius: 50%;
+  animation: m-spin 0.8s linear infinite;
+}
+@keyframes m-spin { to { transform: rotate(360deg); } }
+/* 账号动作沉底：左右留白已由 .m-profile 统一给出，这里只留上下间距
+   （按钮宽度因此与上方卡片完全一致） */
+html.jc-platform-mobile .m-profile__actions { padding: 18px 0 28px; }
+html.jc-platform-mobile .m-btn-block { width: 100%; min-height: 50px; font-size: 16px; }
+/* 登录失败提示（验证码超时 / 网络异常等，文案由 auth store 统一给出） */
+html.jc-platform-mobile .m-profile__error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #fecaca;
+  font-size: 12px;
+}
+html.jc-platform-mobile .m-profile__error span { flex: 1; word-break: break-all; }
+html.jc-platform-mobile .m-profile__error-close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #fecaca;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ========== 8. 设置弹窗内容区：表单行移动端重排 ==========
+   统一为手机系统设置的行样式：
+   - 标签在左、控件靠右对齐，一行内垂直居中；
+   - 行与行之间加分割线；
+   - 宽控件（滑杆等）自动折到标签下一行占满整行。
+   注：模板里 label-width、white-space:nowrap 都是内联样式，必须 !important 覆盖；
+   不使用 :has()（部分安卓 WebView 不支持），全部纯结构选择器。PC 端零命中。 */
+
+/* 页面留白收紧（桌面 24px 边距在手机上浪费太多宽度） */
+html.jc-platform-mobile .jc-settings-dialog .settings-main-header { padding: 12px 16px 10px; }
+html.jc-platform-mobile .jc-settings-dialog .content-title { font-size: 17px; }
+html.jc-platform-mobile .jc-settings-dialog .settings-main-content { padding: 12px 16px 20px; }
+
+/* 表单行：标签左、控件右，水平中线对齐；放不下时控件整体另起一行 */
+html.jc-platform-mobile .jc-settings-dialog .el-form-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  margin-bottom: 0;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-form-item__label {
+  width: auto !important;
+  min-width: 0 !important;
+  /* EP 给 label 写死 height:32px + line-height:32px，字号一改文字就在盒内贴顶，
+     视觉上整行文字不居中 —— 高度放开自适应，自身行内居中 */
+  height: auto !important;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  /* 标签不折行：一行放得下就一行；整个控件组放不下时由 content 换行 */
+  white-space: nowrap;
+  text-align: left;
+  line-height: 1.4;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-form-item__content {
+  margin-left: 0 !important;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+/* 数据存储路径行：标签 + 输入框 + 打开按钮 一行排列 */
+html.jc-platform-mobile .jc-settings-dialog .dir-row {
+  width: auto !important;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 下拉选择：去掉内联固定宽(240px)，收缩后与标签同行 */
+html.jc-platform-mobile .jc-settings-dialog .el-select {
+  width: auto !important;
+  min-width: 150px;
+  max-width: 100%;
+}
+/* 行与行之间的分割线（同一表单内相邻行） */
+html.jc-platform-mobile .jc-settings-dialog .el-form .el-form-item + .el-form-item {
+  border-top: 1px solid var(--jc-border);
+}
+/* 小字描述（行尾 hint）与段落副标题（如「切换语言后立即生效；无需重启」）移动端全部去掉 */
+html.jc-platform-mobile .jc-settings-dialog .field-hint,
+html.jc-platform-mobile .jc-settings-dialog .section-subtitle { display: none !important; }
+/* 带内联固定宽的文本输入框（默认用户名/代理地址/跳板机地址等）：
+   移动端放开固定宽、弹性占满标签右侧剩余空间，保证与标签同行 */
+html.jc-platform-mobile .jc-settings-dialog .el-form-item__content .fit-input {
+  width: auto !important;
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 100%;
+}
+/* 居中兜底：内容区子控件一律水平中线对齐（EP 各控件默认盒高 32/40px，
+   flex 行内 align-items:center 后文字/输入框都与行中线对齐） */
+html.jc-platform-mobile .jc-settings-dialog .el-form-item__content > * {
+  align-items: center;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-input-number,
+html.jc-platform-mobile .jc-settings-dialog .el-select,
+html.jc-platform-mobile .jc-settings-dialog .el-input {
+  vertical-align: middle;
+}
+/* 单选按钮组：收紧字号与内边距，保证「直连/跟随系统/手动配置」这类组一行放下 */
+html.jc-platform-mobile .jc-settings-dialog .el-radio-button__inner {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+/* 单选按钮组允许换行（模板内有 white-space:nowrap 内联样式，兜底） */
+html.jc-platform-mobile .jc-settings-dialog .el-radio-group {
+  white-space: normal !important;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* 操作按钮行（同步拉取/推送、导入/导出会话等）：
+   去掉图标缩窄按钮、并排一行；首按钮靠左与上方标签左对齐，
+   末按钮靠右与上方控件（开关等）右对齐 */
+html.jc-platform-mobile .jc-settings-dialog .action-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+html.jc-platform-mobile .jc-settings-dialog .action-row .el-button {
+  margin-left: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+html.jc-platform-mobile .jc-settings-dialog .action-row .el-button .el-icon { display: none; }
+
+/* 滑杆：去掉内联固定宽(340px)，优先与标签同行，放不下再折行占满 */
+html.jc-platform-mobile .jc-settings-dialog .el-slider {
+  width: auto !important;
+  flex: 1 1 auto;
+  min-width: 170px;
+  max-width: 100%;
+}
+
+/* 固定宽控件（模板内联 width:240px / 260px 等）在窄屏自适应收缩 */
+html.jc-platform-mobile .jc-settings-dialog .el-input,
+html.jc-platform-mobile .jc-settings-dialog .el-select,
+html.jc-platform-mobile .jc-settings-dialog .el-input-number {
+  max-width: 100%;
+}
+
+/* 「保护范围」两列网格在手机上改单列（每项横向空间太窄会折行错位） */
+html.jc-platform-mobile .jc-settings-dialog .scope-box {
+  grid-template-columns: 1fr !important;
+  grid-auto-flow: row !important;
+}
+
+/* ========== 9. 设置页卡片化（参考抖音设置页） ==========
+   每个段落 = 一张卡片，段落标题在卡片上方、字号加大以区别于设置项；
+   卡片内的设置项之间有分割线。
+   实现：卡片背景画在 .section::before 上，顶部让出标题条的高度；
+   标题条固定高度（标题都是短文案，安全），文字贴着卡片上缘。 */
+
+/* 段落容器：透明底，内边距给卡片内容留白（底部留白让卡片不贴内容） */
+html.jc-platform-mobile .jc-settings-dialog .section {
+  position: relative;
+  background: transparent;
+  margin-bottom: 20px;
+  padding: 0 14px 10px;
+}
+/* 标题之后的内容统一与卡片上缘(46px)留出空隙，避免顶到卡片边 */
+html.jc-platform-mobile .jc-settings-dialog .section > :not(.section-title) {
+  margin-top: 8px;
+}
+/* 卡片本体：从标题条下方铺到段落底部，圆角 */
+html.jc-platform-mobile .jc-settings-dialog .section::before {
+  content: '';
+  position: absolute;
+  top: 46px; /* = 标题条 40px + 间距 6px */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--jc-bg-soft);
+  border-radius: 12px;
+  z-index: 0;
+}
+/* 段落内的直接子元素都抬到卡片之上 */
+html.jc-platform-mobile .jc-settings-dialog .section > * { position: relative; z-index: 1; }
+
+/* 段落标题：加大字号、贴住卡片上缘（固定高度，保证 ::before 顶图对齐） */
+html.jc-platform-mobile .jc-settings-dialog .section-title {
+  height: 40px;
+  align-items: flex-end;
+  padding-bottom: 8px;
+  margin-bottom: 0;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+/* 卡片内嵌的子卡片改用页面底色，与外层卡片形成层次 */
+html.jc-platform-mobile .jc-settings-dialog .section .anon-card,
+html.jc-platform-mobile .jc-settings-dialog .section .info-card,
+html.jc-platform-mobile .jc-settings-dialog .section .about-card,
+html.jc-platform-mobile .jc-settings-dialog .section .scope-box {
+  background: var(--jc-bg);
+}
+/* 账户信息卡：移动端拍平内层容器（去背景/边框/内边距），行内容直接
+   落在段落卡片上，与其他设置行左右边缘对齐 */
+html.jc-platform-mobile .jc-settings-dialog .section .info-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+html.jc-platform-mobile .jc-settings-dialog .section .info-card .info-row { padding: 12px 0; }
+html.jc-platform-mobile .jc-settings-dialog .section .info-card .info-row:first-child { padding-top: 12px; }
+html.jc-platform-mobile .jc-settings-dialog .section .info-card .info-row:last-child { padding-bottom: 4px; }
+
+/* 终端颜色等非表单段落：相邻设置块之间也补分割线 */
+html.jc-platform-mobile .jc-settings-dialog .section .color-field + .color-field {
+  border-top: 1px solid var(--jc-border);
+  padding-top: 12px;
+}
+
+/* 纯单选组（圆点 radio，非 radio-button）：固定两列网格，
+   每项等宽等高，圆点与文字垂直居中，行行对齐 */
+html.jc-platform-mobile .jc-settings-dialog .el-radio-group:has(.el-radio) {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-radio-group .el-radio {
+  height: 32px;
+  margin-right: 0;
+  display: inline-flex;
+  align-items: center;
+}
+html.jc-platform-mobile .jc-settings-dialog .el-radio-group .el-radio .el-radio__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 「恢复默认 / 按钮行 / 语言单选组」这类单内容卡片：给足卡片高度，
+   标题以下的内容区垂直居中（auto 上下边距实现，!important 兜底通用 margin-top 规则） */
+html.jc-platform-mobile .jc-settings-dialog .section-reset,
+html.jc-platform-mobile .jc-settings-dialog .section:has(> .action-row),
+html.jc-platform-mobile .jc-settings-dialog .section:has(> .el-radio-group) {
+  display: flex;
+  flex-direction: column;
+  min-height: 116px;
+}
+html.jc-platform-mobile .jc-settings-dialog .section-reset > .el-button {
+  align-self: flex-start;
+  margin-top: auto !important;
+  margin-bottom: auto !important;
+}
+html.jc-platform-mobile .jc-settings-dialog .section > .action-row {
+  align-items: center;
+  margin-top: auto !important;
+  margin-bottom: auto !important;
+}
+html.jc-platform-mobile .jc-settings-dialog .section > .el-radio-group {
+  margin-top: auto !important;
+  margin-bottom: auto !important;
+}
+
+/* 关于页 descriptions：加宽第一列（标签列），「软件版本/官方网站/使用文档」不再折行 */
+html.jc-platform-mobile .jc-settings-dialog .el-descriptions__label {
+  min-width: 96px;
+}
+
+/* ========== 9.5 移动端设置分级导航：进入/返回滑动 ========== */
+/* 内容面板绝对定位填满内容区，过渡期间新旧两页重叠（旧页向左退出、新页从右进入） */
+html.jc-platform-mobile .jc-settings-dialog .settings-main-content {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 16px 20px;
+  will-change: transform;
+}
+/* 进入下级：新页从右往左进入（translateX 100% → 0），旧页向左退出（0 → -100%） */
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-fwd-enter-active,
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-fwd-leave-active,
+/* 返回：旧页从左往右退出（0 → 100%），目标页从左进入（-100% → 0） */
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-back-enter-active,
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-back-leave-active {
+  transition: transform .28s cubic-bezier(.4, 0, .2, 1);
+}
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-fwd-enter-from { transform: translateX(100%); }
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-fwd-leave-to   { transform: translateX(-100%); }
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-back-enter-from { transform: translateX(-100%); }
+html.jc-platform-mobile .jc-settings-dialog .m-set-pane.slide-back-leave-to   { transform: translateX(100%); }
+
+/* ========== 10. 同步冲突裁决弹窗：移动端全宽适配 ========== */
+html.jc-platform-mobile .jc-sync-conflict-dialog {
+  width: calc(100vw - 24px) !important;
+  max-width: calc(100vw - 24px) !important;
+  margin: auto 12px !important;
+}
+/* 选项卡片加大内边距，标题/描述字号微调，保证小屏可读、可点区域足够 */
+html.jc-platform-mobile .jc-sync-conflict-dialog .conflict-alert { padding: 12px 14px; }
+html.jc-platform-mobile .jc-sync-conflict-dialog .conflict-alert-title { font-size: 14px; }
+html.jc-platform-mobile .jc-sync-conflict-dialog .conflict-option { padding: 12px 14px; }
+html.jc-platform-mobile .jc-sync-conflict-dialog .conflict-option-title { font-size: 15px; }
+html.jc-platform-mobile .jc-sync-conflict-dialog .conflict-option-desc { font-size: 13px; }
+/* 底部确认按钮：放大为通栏按钮，方便拇指点按 */
+html.jc-platform-mobile .jc-sync-conflict-dialog .el-dialog__footer .el-button {
+  width: 100%;
+  height: 42px;
+  font-size: 15px;
+}
+
+/* ========== 11. 会话列表（HostListPanel / HostNode）：行高与字号适配触屏 ==========
+   桌面 py-1/py-1.5 + text-sm 在手机上过于紧凑：加大行内边距、名称与地址字号，
+   保证 40px+ 行高，满足触屏最小点按尺寸。缩进 paddingLeft 为内联样式不受影响。 */
+/* 移动端会话列表的信息层级设计：
+     分组行   = 区块表头（淡强调底色、加粗大字号，高度与会话行严格一致）
+     会话行   = 独立圆角卡片（浅底 + 1px 描边 + 圆角 + 6px 行距）
+     组内会话 = 卡片再右移一档 + 左侧强调色引导条，明确「属于该分组」
+   为什么用「卡片 + 行距」而不是分割线：这是带缩进的树形列表 ——
+   分割线在层级交错、组内最后一行处会出现「断头线 / 多余线」，
+   卡片则天然与相邻项分离，也是当下 App 列表更主流的做法。 */
+
+html.jc-platform-mobile .host-list-panel [data-host-node-id] {
+  /* 禁用长按文本选择 / 系统右键气泡，避免与「长按右键菜单」冲突 */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 列表底色 = 页面底色（覆盖组件自带的 bg-[var(--jc-bg-soft)]）：
+   会话卡片（--jc-bg-soft）只有相对更浅的列表底才能看出是「卡片」 */
+html.jc-platform-mobile .host-list-panel { background: var(--jc-bg); }
+/* 分组行：区块表头。padding / min-height 与会话卡片同为一套值，保证两者等高；
+   左侧按层级缩进（用 --node-indent，卡片内部留白保持统一） */
+html.jc-platform-mobile .host-list-panel [data-host-node-type="folder"] {
+  margin: 4px 8px 6px calc(8px + var(--node-indent, 0px));
+  padding: 10px 12px !important;
+  min-height: 56px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--jc-accent) 12%, transparent);
+  font-size: 16px;
+  font-weight: 600;
+}
+/* 会话行：独立卡片（与分组行等高）。底色用 --jc-bg-soft，与列表底色（--jc-bg）
+   在三种主题下都不同，卡片自然浮在页面之上。
+   注意不要用 --jc-bg-panel：暗色主题下它与 --jc-bg-soft 同色（都是 #252526），
+   卡片会完全糊进页面背景 */
+html.jc-platform-mobile .host-list-panel [data-host-node-type="host"] {
+  margin-left: calc(8px + var(--node-indent, 0px));
+  margin-right: 8px;
+  margin-bottom: 6px;
+  padding: 8px 12px !important;
+  min-height: 56px;
+  border-radius: 14px;
+  background: var(--jc-bg-soft);
+  border: 1px solid var(--jc-border);
+}
+html.jc-platform-mobile .host-list-panel [data-host-node-type="host"]:active {
+  background: var(--jc-bg-hover);
+}
+/* 组内会话（二次层级及更深）：比分组表头再右移一档，并在卡片左侧画一条强调色引导条。
+   只靠缩进在触屏上不易看出从属关系，加引导条后「属于哪个分组」一眼可辨 */
+html.jc-platform-mobile .host-list-panel [data-host-node-type="host"].host-node--child {
+  margin-left: calc(20px + var(--node-indent, 0px));
+  border-left: 3px solid color-mix(in srgb, var(--jc-accent) 55%, transparent);
+}
+/* 行内图标（分组箭头 / 分组图标）：el-icon 用内联 style 设字号，需 !important 覆盖 */
+html.jc-platform-mobile .host-list-panel [data-host-node-id] .el-icon {
+  font-size: 18px !important;
+}
+/* 会话行左侧主机图标：明显放大一档，作为列表项的视觉锚点（原来 14px 太小）。
+   排除行尾的「>」箭头，它要小而含蓄，不能跟主机图标一样大 */
+html.jc-platform-mobile .host-list-panel [data-host-node-type="host"] > .el-icon:not(.host-node__chev) {
+  font-size: 24px !important;
+}
+/* 会话行右侧箭头：提示「整行可点开」，弱化处理不抢主体 */
+html.jc-platform-mobile .host-list-panel .host-node__chev {
+  font-size: 16px !important;
+  color: var(--jc-text-muted);
+  opacity: .6;
+}
+/* 会话行双行文案：上=会话名，下=用户名@IP */
+html.jc-platform-mobile .host-list-panel .host-node__name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+html.jc-platform-mobile .host-list-panel .host-node__sub {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--jc-text-muted);
+}
+/* 右侧地址列与「N 项」计数：text-[10px] 太小，放大一档 */
+html.jc-platform-mobile .host-list-panel [data-host-node-id] .text-\[10px\] {
+  font-size: 12px !important;
+}
+/* 「空文件夹」提示同步放大（该提示现位于分组子节点容器 .host-node__children 内） */
+html.jc-platform-mobile .host-list-panel .host-node__children > .text-\[10px\] {
+  font-size: 12px !important;
+}
+
+/* ========== 12. 会话页右下角 FAB 扇形菜单 + 命名空间行 ========== */
+/* 命名空间行：下拉与右侧三个图标按钮（管理/导入/导出）在左右方向上均匀分布 */
+html.jc-platform-mobile .host-list-panel .m-ns-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+/* 头部命名空间下拉：占满图标按钮之外的剩余宽度（窄屏自适应），均匀布局由行级 space-between 保证 */
+html.jc-platform-mobile .host-list-panel .m-ns-select {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+/* 图标按钮组：管理命名空间 / 导入 / 导出，三个纯图标按钮 */
+html.jc-platform-mobile .host-list-panel .m-ns-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* 与命名空间下拉同高同圆角的方形图标按钮（全局移动端控件高 46px，见第 16 节） */
+html.jc-platform-mobile .host-list-panel .m-ns-icon {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--jc-border);
+  border-radius: 10px;
+  background: var(--jc-bg-panel);
+  color: var(--jc-text-soft);
+  cursor: pointer;
+}
+html.jc-platform-mobile .host-list-panel .m-ns-icon:active {
+  background: var(--jc-bg-hover);
+  color: var(--jc-text);
+}
+/* FAB 悬浮按钮：贴右下角。宿主（页面区）底部就是 TabBar 上沿，故只需 16px。
+   刻意用 absolute 而不是 fixed —— 切页动效会给页面图层加 transform，
+   fixed 会把锚点换到图层上，动画期间出现上下跳动 */
+html.jc-platform-mobile .host-list-panel .m-fab-wrap {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 52px;
+  height: 52px;
+  z-index: 55;
+}
+html.jc-platform-mobile .host-list-panel .m-fab {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: var(--jc-accent, #3b82f6);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .28);
+  cursor: pointer;
+  transition: transform .2s ease, background .2s ease;
+}
+html.jc-platform-mobile .host-list-panel .m-fab:active { transform: scale(.92); }
+html.jc-platform-mobile .host-list-panel .m-fab.is-open { transform: rotate(45deg); }
+/* 遮罩：点空白处收起扇形菜单 */
+html.jc-platform-mobile .host-list-panel .m-fan-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: rgba(0, 0, 0, .18);
+}
+/* 扇形锚点：定在 FAB 圆心，菜单项沿 180°→90° 圆弧分布（CSS 变量由内联样式给出） */
+html.jc-platform-mobile .host-list-panel .m-fan {
+  position: absolute;
+  left: 26px;
+  top: 26px;
+  width: 0;
+  height: 0;
+}
+html.jc-platform-mobile .host-list-panel .m-fan__item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 1px solid var(--jc-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--jc-bg-soft);
+  color: var(--jc-text);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .22);
+  cursor: pointer;
+  transform: translate(-50%, -50%) translate(var(--fan-dx), var(--fan-dy));
+  transition: transform .26s cubic-bezier(.34, 1.4, .64, 1), opacity .18s ease;
+}
+/* 扇形菜单项只保留图标（无文字），图标适当放大以便点按辨认 */
+html.jc-platform-mobile .host-list-panel .m-fan__item:active {
+  background: var(--jc-accent, #3b82f6);
+  color: #fff;
+}
+/* 进出场：从 FAB 圆心缩放弹出 / 收回，逐项错峰 */
+html.jc-platform-mobile .host-list-panel .m-fan-enter-from .m-fan__item,
+html.jc-platform-mobile .host-list-panel .m-fan-leave-to .m-fan__item {
+  transform: translate(-50%, -50%) scale(.2);
+  opacity: 0;
+}
+html.jc-platform-mobile .host-list-panel .m-fan-enter-active .m-fan__item:nth-child(1) { transition-delay: 0ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-enter-active .m-fan__item:nth-child(2) { transition-delay: 40ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-enter-active .m-fan__item:nth-child(3) { transition-delay: 80ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-enter-active .m-fan__item:nth-child(4) { transition-delay: 120ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-enter-active .m-fan__item:nth-child(5) { transition-delay: 160ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-leave-active .m-fan__item:nth-child(1) { transition-delay: 80ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-leave-active .m-fan__item:nth-child(2) { transition-delay: 60ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-leave-active .m-fan__item:nth-child(3) { transition-delay: 40ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-leave-active .m-fan__item:nth-child(4) { transition-delay: 20ms; }
+html.jc-platform-mobile .host-list-panel .m-fan-leave-active .m-fan__item:nth-child(5) { transition-delay: 0ms; }
+
+/* ========== 13. 移动端弹窗：宽度自适应 + 键盘避让 ========== */
+/* 宽度跟随屏幕（EP 的 width 是内联样式，需 !important 覆盖），左右各留 12px */
+html.jc-platform-mobile .el-overlay-dialog .el-dialog {
+  max-width: calc(100vw - 24px) !important;
+  transition: transform .22s ease-out, margin-top .22s ease-out;
+}
+/* 键盘弹出时弹窗贴到「键盘上沿之上一点」：这是输入时的自然位置。
+   早期实现是贴到屏幕顶端（margin-top: 12px），实测观感很差 ——
+   内容只有一行输入框，却贴着状态栏，离键盘十万八千里。
+   做法：把遮罩层（EP 默认是块级 + overflow:auto）显式改成纵向 flex 容器，
+   弹窗用 margin-top:auto 沉到底部；左右仍是 EP 的 margin auto（水平居中）。
+   --jc-kb-avoid = 「前端还需自行让出的底部高度」（mobileKeyboard.ts 写入）：
+   原生已把键盘做成内容视图内边距、WebView 真的变矮时为 0 —— 此时遮罩层本来就只到
+   键盘上沿，再加会让弹窗被顶到屏幕中间；只有确实没让出的机型才等于键盘高度。
+   8px 是与键盘之间的呼吸间距。
+   弹窗比可视区还高时 auto 外边距自动归零 → 顶部对齐，遮罩层可滚动，不会切掉表头。 */
+html.jc-platform-mobile.jc-kb-open .el-overlay-dialog {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--jc-kb-avoid, 0px) + 8px);
+}
+html.jc-platform-mobile.jc-kb-open .el-overlay-dialog .el-dialog {
+  margin-top: auto !important;
+  margin-bottom: 0 !important;
+  /* 这里刻意不再叠加 translateY(--jc-vv-top)：贴底定位已经由「遮罩层底部 = 键盘上沿」
+     保证，再叠加视口偏移会在 offsetTop 报了大值的机型上把弹窗推出屏幕外
+     （表现为整屏空白，只剩遮罩层的暗色）。 */
+}
+
+/* ========== 14. 移动端会话新建/编辑整页（MobileSessionEditPage） ========== */
+/* 整页覆盖在底部导航之上（新建会话不再弹窗）；顶部按状态栏预留安全区 */
+html.jc-platform-mobile .m-subpage {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  padding-top: var(--jc-mobile-top-inset);
+}
+/* 进出场：进入从右滑入（0 ← 100%），返回向右滑出（100%） */
+.m-subpage-enter-active,
+.m-subpage-leave-active {
+  transition: transform .26s cubic-bezier(.4, 0, .2, 1);
+}
+.m-subpage-enter-from,
+.m-subpage-leave-to {
+  transform: translateX(100%);
+}
+/* 顶部返回条：返回箭头 + 居中标题 + 右侧占位（保证标题真正居中） */
+html.jc-platform-mobile .m-se-hed {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--jc-border);
+  background: var(--jc-bg-soft);
+}
+html.jc-platform-mobile .m-se-hed__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--jc-text);
+  cursor: pointer;
+}
+html.jc-platform-mobile .m-se-hed__back:active { background: var(--jc-bg-hover); }
+html.jc-platform-mobile .m-se-hed__title {
+  flex: 1;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--jc-text);
+}
+html.jc-platform-mobile .m-se-hed__spacer { width: 36px; }
+/* 表单区：内部滚动，键盘弹出时不会被顶出屏幕 */
+html.jc-platform-mobile .m-se-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px 24px;
+}
+/* 底部操作栏：左「测试连接」，右「取消 / 保存 / 保存并连接」 */
+html.jc-platform-mobile .m-se-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px calc(10px + var(--jc-mobile-bottom-inset));
+  border-top: 1px solid var(--jc-border);
+  background: var(--jc-bg-soft);
+}
+html.jc-platform-mobile .m-se-foot__main { display: flex; align-items: center; gap: 8px; }
+/* 窄屏下压缩按钮内边距，保证「测试连接 / 取消 / 保存 / 保存并连接」四个按钮一行不换行 */
+html.jc-platform-mobile .m-se-foot__main .el-button,
+html.jc-platform-mobile .m-se-foot__test {
+  margin-left: 0 !important;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* ========== 15. 移动端左右滑动切页 ========== */
+/* 手势判定在 DockLayout（起止位移 + 水平占优 + 横向可滚动区域让位给内容滚动），
+   这里只负责切换动效：新页整体从侧边平移到视口内（原生分页器手感）。
+   注意：动效会给页面图层加 transform，图层内 position: fixed 的元素锚点会换成
+   该图层 —— 会话页 FAB 已改为 absolute（见第 12 节），保持一致不再跳动 */
+html.jc-platform-mobile .m-page-layer {
+  /* 平移过程中不出现横向滚动条；图层自带底色，滑动时下层不透出（避免闪出空白） */
+  overflow: hidden;
+  background: var(--jc-bg);
+}
+html.jc-platform-mobile .m-page-layer.is-slide-next {
+  animation: m-page-in-next .26s cubic-bezier(.32, .72, .3, 1);
+}
+html.jc-platform-mobile .m-page-layer.is-slide-prev {
+  animation: m-page-in-prev .26s cubic-bezier(.32, .72, .3, 1);
+}
+/* 左滑进下一页：新页自右向左平移到位；右滑回上一页：新页自左向右平移到位 */
+@keyframes m-page-in-next {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes m-page-in-prev {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* ========== 16. 移动端表单控件统一放大 + 圆角矩形 ========== */
+/* 移动端全局统一输入类控件尺寸（文本框 / 下拉 / 数字框 / 文本域）：
+   无论在会话编辑整页、应用弹窗还是设置页，输入框高度与圆角都保持一致。
+   分段按钮与常规按钮则限定在「会话编辑页 + 应用弹窗 + 消息框」内，
+   避免影响设置页里成排的小控件与图标按钮。 */
+html.jc-platform-mobile {
+  --m-ctl-h: 46px;
+  --m-ctl-radius: 10px;
+}
+html.jc-platform-mobile .m-session-edit,
+html.jc-platform-mobile .jc-dialog,
+html.jc-platform-mobile .el-message-box {
+  font-size: 15px;
+}
+/* 文本框 / 下拉框 / 数字框 / 文本域：统一高度、圆角、字号与左右内边距
+   （!important 覆盖 FloatField 的 scoped 36px 与 EP 的 size="small" 高度） */
+html.jc-platform-mobile .el-input__wrapper,
+html.jc-platform-mobile .el-select__wrapper,
+html.jc-platform-mobile .el-input-number,
+html.jc-platform-mobile .el-textarea__inner {
+  height: var(--m-ctl-h) !important;
+  min-height: var(--m-ctl-h) !important;
+  border-radius: var(--m-ctl-radius) !important;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+html.jc-platform-mobile .el-textarea__inner {
+  /* 文本域是多行控件：只统一内边距与圆角，不锁死高度 */
+  height: auto !important;
+  min-height: 96px !important;
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+html.jc-platform-mobile .el-input__inner,
+html.jc-platform-mobile .el-select__selected-item,
+html.jc-platform-mobile .el-input-number .el-input__inner {
+  height: auto !important;
+  line-height: 1.4 !important;
+  font-size: 16px;
+}
+/* iOS / Android WebView：输入控件字体 < 16px 时，聚焦会自动放大整个页面（页面超出屏幕）。
+   统一提到 16px 从根源杜绝缩放；xterm 隐藏输入框除外（改它会影响终端 IME 光标定位）。
+   本规则选择器权重高于 EP 的 .el-input--small .el-input__inner，size="small" 也会被覆盖。 */
+html.jc-platform-mobile input:not(.xterm-helper-textarea),
+html.jc-platform-mobile textarea:not(.xterm-helper-textarea),
+html.jc-platform-mobile select {
+  font-size: 16px;
+}
+/* 数字框：右侧箭头占位，文字区需让出空间，避免与箭头压叠 */
+html.jc-platform-mobile .el-input-number.is-controls-right .el-input__wrapper {
+  padding-right: 30px;
+}
+/* 例外：滑杆自带的「数字输入框」（设置页 show-input）保持紧凑，不随全局加高 */
+html.jc-platform-mobile .el-slider__input .el-input__wrapper,
+html.jc-platform-mobile .el-slider__input .el-input-number {
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 8px !important;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+/* 数字框右侧上下箭头：右缘跟随圆角，避免方角突出 */
+html.jc-platform-mobile .el-input-number.is-controls-right .el-input-number__increase {
+  border-top-right-radius: var(--m-ctl-radius) !important;
+}
+html.jc-platform-mobile .el-input-number.is-controls-right .el-input-number__decrease {
+  border-bottom-right-radius: var(--m-ctl-radius) !important;
+}
+/* 分段按钮（认证方式等）：拉满整行、等宽、与其他控件严格等高
+   （EP 对 size="small" 会按组件尺寸给高度，这里 !important 强制对齐 --m-ctl-h） */
+html.jc-platform-mobile .m-session-edit .el-radio-group,
+html.jc-platform-mobile .jc-dialog .el-radio-group {
+  display: flex;
+  width: 100%;
+}
+html.jc-platform-mobile .m-session-edit .el-radio-button,
+html.jc-platform-mobile .jc-dialog .el-radio-button {
+  flex: 1 1 0;
+}
+html.jc-platform-mobile .m-session-edit .el-radio-button__inner,
+html.jc-platform-mobile .jc-dialog .el-radio-button__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--m-ctl-h) !important;
+  min-height: var(--m-ctl-h) !important;
+  padding: 0 12px;
+  font-size: 15px;
+}
+html.jc-platform-mobile .m-session-edit .el-radio-button:first-child .el-radio-button__inner,
+html.jc-platform-mobile .jc-dialog .el-radio-button:first-child .el-radio-button__inner {
+  border-top-left-radius: var(--m-ctl-radius);
+  border-bottom-left-radius: var(--m-ctl-radius);
+}
+html.jc-platform-mobile .m-session-edit .el-radio-button:last-child .el-radio-button__inner,
+html.jc-platform-mobile .jc-dialog .el-radio-button:last-child .el-radio-button__inner {
+  border-top-right-radius: var(--m-ctl-radius);
+  border-bottom-right-radius: var(--m-ctl-radius);
+}
+/* 浮动标签：盒子变高后放大，仍骑在边框线上 */
+html.jc-platform-mobile .float-field .ff-label { font-size: 14px; }
+html.jc-platform-mobile .float-field.is-floated .ff-label { font-size: 13px; }
+/* 文字整体放大一档，与放大的控件/按钮协调（普通标签、提示文案、弹窗标题） */
+html.jc-platform-mobile .jc-dialog label:not(.ff-label),
+html.jc-platform-mobile .m-session-edit label:not(.ff-label) { font-size: 14px; }
+html.jc-platform-mobile .ff-hint { font-size: 14px; }
+html.jc-platform-mobile .m-se-hed__title { font-size: 17px; }
+html.jc-platform-mobile .jc-dialog .el-dialog__title { font-size: 17px; }
+html.jc-platform-mobile .el-message-box__title { font-size: 17px; }
+html.jc-platform-mobile .el-message-box__message { font-size: 15px; }
+/* 下拉菜单：选项同样加高、面板圆角，与输入控件观感统一 */
+html.jc-platform-mobile .el-select-dropdown {
+  border-radius: 12px;
+}
+html.jc-platform-mobile .el-select-dropdown__item {
+  height: 44px;
+  line-height: 44px;
+  font-size: 15px;
+}
+/* 表单/弹窗/消息框内的常规按钮（「浏览...」「清除」「取消 / 确定」等）与输入控件同高、同圆角，
+   避免行内高低不齐；纯图标 text / link 按钮（如命名空间行的编辑/删除）不参与，保持紧凑 */
+html.jc-platform-mobile .m-session-edit .el-button:not(.is-text):not(.is-link),
+html.jc-platform-mobile .jc-dialog .el-button:not(.is-text):not(.is-link),
+html.jc-platform-mobile .el-message-box .el-button:not(.is-text):not(.is-link) {
+  height: var(--m-ctl-h);
+  border-radius: var(--m-ctl-radius);
+  font-size: 15px;
+}
+/* 弹窗 / 消息框底部按钮：等分撑满整行（触摸端按钮宽度足够才好点按，
+   避免「取消/确定」挤在右侧一小块，或「重命名」输入框过窄） */
+html.jc-platform-mobile .jc-dialog .el-dialog__footer,
+html.jc-platform-mobile .el-message-box__btns {
+  display: flex;
+  gap: 10px;
+}
+html.jc-platform-mobile .jc-dialog .el-dialog__footer .el-button,
+html.jc-platform-mobile .el-message-box__btns .el-button {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: 0 !important;
+}
+/* 消息框（重命名 / 确认等）：输入框撑满、内容区留白加大 */
+html.jc-platform-mobile .el-message-box {
+  border-radius: 14px;
+}
+html.jc-platform-mobile .el-message-box__input .el-input {
+  width: 100%;
+}
+/* 命名空间管理弹窗：列表行文字、行内图标与「重命名 / 删除」按钮放大到可轻松点按 */
+html.jc-platform-mobile .jc-dialog .ns-row {
+  padding: 10px 12px;
+  border-radius: var(--m-ctl-radius);
+}
+html.jc-platform-mobile .jc-dialog .ns-row__name { font-size: 16px; }
+/* 行首图标由 size="14" 写成内联样式，需 !important 才能放大 */
+html.jc-platform-mobile .jc-dialog .ns-row > .el-icon { font-size: 18px !important; }
+html.jc-platform-mobile .jc-dialog .ns-row__act.el-button {
+  width: 40px;
+  height: 40px !important;
+  border-radius: 10px;
+  font-size: 18px;
+}
+/* 新增命名空间：输入框占满剩余宽度，与「添加」按钮一行对齐 */
+html.jc-platform-mobile .jc-dialog .ns-add .el-input { flex: 1 1 0; min-width: 0; }
+/* 底部操作栏：四个按钮一行放不下（两字按钮会被挤成细条、五字按钮文字溢出），
+   改为两行 —— 第一行「测试连接」整行，第二行「取消 / 保存 / 保存并连接」三等分等宽 */
+html.jc-platform-mobile .m-se-foot {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+html.jc-platform-mobile .m-se-foot__test {
+  flex: 1 1 100%;
+}
+html.jc-platform-mobile .m-se-foot__main {
+  flex: 1 1 100%;
+  display: flex;
+}
+html.jc-platform-mobile .m-se-foot__main .el-button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* 设置弹窗是「整页」，不参与第 13 节的通用弹窗宽度限制。
+   第 13 节 `html.jc-platform-mobile .el-overlay-dialog .el-dialog { max-width: 100vw - 24px }`
+   选择器比第 3 节的设置弹窗规则更具体，会把满屏弹窗压窄 24px；又因 margin-left 为 0，
+   这 24px 全部落在右侧，表现为内容右边凭空多出一条空白带。
+   此处用同等具体度 + 更靠后（同优先度后者胜）把它还原为满宽 */
+html.jc-platform-mobile .el-overlay-dialog .jc-settings-dialog.el-dialog {
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+}
+
+/* ========== 18. 移动端细节：Tab 溢出光效加强 + 全局提示下移 ========== */
+/* 终端 Tab 栏：标签横向溢出时，左右两侧的「吸入光效」加大加亮 ——
+   手机屏窄，Tab 很容易被挤出可视区，这道光效是「两侧还有标签」的主要提示 */
+html.jc-platform-mobile .terminal-tabbar .suck-light {
+  width: 46px;
+  margin-left: -46px;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 40%);
+  mask-image: linear-gradient(to right, transparent, black 40%);
+}
+html.jc-platform-mobile .terminal-tabbar .suck-light--left {
+  margin-left: 0;
+  margin-right: -46px;
+  -webkit-mask-image: linear-gradient(to left, transparent, black 40%);
+  mask-image: linear-gradient(to left, transparent, black 40%);
+}
+/* 光晕：贴边一道强调色渐隐（方向感更明确）+ 更亮的径向光，并改用主题强调色
+   （原实现写死蓝色，换主题后与 FAB/选中态的颜色不一致） */
+html.jc-platform-mobile .terminal-tabbar .suck-light__glow {
+  background:
+    linear-gradient(to right, transparent 18%, color-mix(in srgb, var(--jc-accent) 70%, transparent)),
+    radial-gradient(130% 130% at 100% 50%, color-mix(in srgb, var(--jc-accent) 85%, transparent), color-mix(in srgb, var(--jc-accent) 30%, transparent) 55%, transparent 82%);
+  animation: m-suck-breathe-strong 2.2s ease-in-out infinite;
+}
+html.jc-platform-mobile .terminal-tabbar .suck-light--left .suck-light__glow {
+  background:
+    linear-gradient(to left, transparent 18%, color-mix(in srgb, var(--jc-accent) 70%, transparent)),
+    radial-gradient(130% 130% at 0% 50%, color-mix(in srgb, var(--jc-accent) 85%, transparent), color-mix(in srgb, var(--jc-accent) 30%, transparent) 55%, transparent 82%);
+}
+/* 呼吸幅度加大：最低亮度也保持在 70% 以上，避免「忽明忽暗看不出有内容」 */
+@keyframes m-suck-breathe-strong {
+  0%, 100% { opacity: .75; }
+  50% { opacity: 1; }
+}
+/* 全局提示消息（ElMessage）：默认 top 20px 会贴住状态栏，整体下移到状态栏之下。
+   用 margin-top 平移：多条消息各自的内联 top 仍生效，堆叠与进出场动画都不受影响。
+   深色壁纸下默认样式不明显：加投影描边提升层次，文字放大加粗并提亮 */
+html.jc-platform-mobile .el-message {
+  margin-top: 56px !important;
+  padding: 12px 18px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  border: 1px solid rgba(255, 255, 255, .14);
+}
+html.jc-platform-mobile .el-message .el-message__content {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--jc-text);
+}
+
+/* ========== 19. 移动端仪表盘与 SFTP 细节 ========== */
+/* ---- 19.1 仪表盘（DeviceInfoPanel）：字号放大 ---- */
+/* 卡片内的文字整体放大一档：Tailwind 的 12 / 11 / 10px 在手机上偏小，行高同步放宽，
+   避免只放大字号后行距挤在一起 */
+html.jc-platform-mobile .device-info-panel .text-xs { font-size: 14px !important; line-height: 1.65 !important; }
+html.jc-platform-mobile .device-info-panel .text-sm { font-size: 15px !important; line-height: 1.65 !important; }
+html.jc-platform-mobile .device-info-panel .text-\[11px\] { font-size: 13px !important; line-height: 1.55 !important; }
+html.jc-platform-mobile .device-info-panel .text-\[10px\] { font-size: 12px !important; line-height: 1.5 !important; }
+html.jc-platform-mobile .device-info-panel .text-\[9px\] { font-size: 11px !important; line-height: 1.5 !important; }
+/* 卡片标题与右侧摘要再大一档，作为卡片的视觉锚点 */
+html.jc-platform-mobile .device-info-panel .card-header .text-xs { font-size: 15px !important; }
+/* 头部工具栏按钮（折叠展开 / 设置）：放大到触摸友好尺寸（桌面 26px 高、13px 字号） */
+html.jc-platform-mobile .device-info-panel .adaptive-toolbar .toolbar-btn {
+  height: 46px !important;
+  min-width: 46px !important;
+  padding: 0 10px !important;
+  font-size: 22px !important;
+  border-radius: 12px;
+}
+
+/* ---- 19.2 SFTP：工具栏移到面板底部 + 按钮放大 ---- */
+/* 与面包屑对调位置：顶部头部行放面包屑，工具栏贴面板底部。
+   工具栏在 DOM 里位于头部行内（Teleport 未启用），这里用绝对定位锚到 .fs-browser
+   （relative）底缘 —— 包含块是 overflow 裁剪元素的祖先，不会被头部裁掉 */
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* 高于列表加载覆盖层（.fs-loading 为 20），否则加载时工具栏被覆盖层盖住、按钮像消失；
+     低于传输队列弹窗（z-30），保证队列弹窗仍压在工具栏之上 */
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 46px;
+  padding: 0 8px;
+  background: var(--jc-bg-soft);
+  border-top: 1px solid var(--jc-border);
+  /* 与底部导航之间补一条分割线（两者背景同为 bg-soft，相邻时会糊成一整块） */
+  border-bottom: 1px solid var(--jc-border);
+}
+/* 工具条已自带下边框，让底部导航的上边框让位，避免同一条边界叠成 2px 粗线
+   （`:has()` 不被支持时本条失效，仅表现为线条略粗，不影响功能） */
+html.jc-platform-mobile .layout-body:has(.fs-mobile-toolbar) > .m-tabbar {
+  border-top: none;
+}
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .adaptive-toolbar {
+  width: 100%;
+  justify-content: center;
+}
+/* 工具栏按钮：贴底的整行工具条空间充裕，按钮放大到触摸友好尺寸 */
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .toolbar-btn {
+  height: 38px !important;
+  min-width: 38px !important;
+  padding: 0 7px !important;
+  font-size: 18px !important;
+  border-radius: 10px;
+}
+/* 触摸端点击后取消残留高亮：鼠标的 :hover 在触屏上会"粘住"、el-button 的 focus 背景也会保留，
+   于是按钮点完仍显示为按下/选中态。这里只清理交互残留，--active（真实状态）按钮不受影响。 */
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .toolbar-btn:not(.toolbar-btn--active):hover,
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .toolbar-btn:not(.toolbar-btn--active):focus,
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .toolbar-btn:not(.toolbar-btn--active):focus-visible,
+html.jc-platform-mobile .fs-browser .fs-mobile-toolbar .toolbar-btn:not(.toolbar-btn--active):active {
+  color: var(--jc-text) !important;
+  background-color: transparent !important;
+  outline: none !important;
+}
+
+/* ---- 19.3 SFTP：面包屑回到顶部头部行 ---- */
+/* 工具栏移到底部后，面包屑从绝对定位的底部条还原回头部行内
+   （点分段跳转、点空白进入路径编辑、分段溢出可横向滚动，功能不变） */
+html.jc-platform-mobile .fs-browser .fs-breadcrumb {
+  position: static;
+  height: auto;
+  padding: 0 2px;
+  font-size: 13px;
+  background: transparent;
+  border-top: none;
+}
+/* 面包屑分段：保持在头部 32px 行高内可点 */
+html.jc-platform-mobile .fs-browser .fs-breadcrumb > span > span {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+}
+/* 面包屑右侧「复制当前路径」纯图标按钮（模板 v-if="isMobile"，桌面不渲染） */
+html.jc-platform-mobile .fs-browser .fs-copy-path {
+  flex: none;
+  width: 30px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--jc-text-muted);
+  cursor: pointer;
+}
+html.jc-platform-mobile .fs-browser .fs-copy-path:active {
+  background: var(--jc-bg-hover);
+  color: var(--jc-text);
+}
+/* 路径编辑态：输入框回到头部行内 */
+html.jc-platform-mobile .fs-browser .fs-breadcrumb--edit { padding: 0 2px; }
+html.jc-platform-mobile .fs-browser .fs-breadcrumb--edit input { height: 26px !important; font-size: 13px !important; }
+/* 面包屑溢出光效：跟随面包屑留在头部右缘 */
+html.jc-platform-mobile .fs-browser .panel-header__center > .suck-light {
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 7;
+  height: 56px;
+  width: 46px;
+  margin: 0;
+}
+/* 内容区让出底部工具栏高度，否则最后一行会被工具条盖住 */
+html.jc-platform-mobile .fs-browser .fs-content { padding-bottom: 46px; }
+/* 底部状态行（路径 · N 项 / 传输进度）：移动端整行隐藏（任务 1：去掉该元素） */
+html.jc-platform-mobile .fs-browser .fs-status { display: none; }
+
+/* ---- 19.4 SFTP：文件 / 文件夹行高略增 ---- */
+/* 单元格上下内边距是内联的 4 * itemZoom（见 FileSystemBrowser 模板），
+   直接覆盖 padding 会在放大字号后反而挤压内容；这里给行设最小高度，
+   内容多时行自身照常撑高，行高随缩放自然增长 */
+html.jc-platform-mobile .fs-browser .fs-content table > tbody > tr {
+  height: 38px;
+}
+html.jc-platform-mobile .fs-browser .fs-content table > tbody > tr > td {
+  vertical-align: middle;
+}
+
+/* ========== 20. 会话长按 / 右键菜单：字号与容器放大 ========== */
+/* 长按菜单沿用桌面右键菜单（.context-menu-menu / .menu-item），
+   桌面 13px 字号与 7px 行距在手机上偏小、点不准，这里整体放大一档。
+   选择器限定在 .host-list-panel 内，避免波及顶部菜单栏 / 设置页同名 .menu-item */
+html.jc-platform-mobile .host-list-panel .context-menu-menu {
+  min-width: 184px !important;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+}
+html.jc-platform-mobile .host-list-panel .context-menu-menu .menu-item {
+  gap: 10px;
+  padding: 12px 16px !important;
+  font-size: 16px !important;
+  line-height: 1.3;
+}
+/* 菜单项图标跟着放大（Element 图标默认随字号） */
+html.jc-platform-mobile .host-list-panel .context-menu-menu .menu-item .el-icon {
+  font-size: 17px;
+}
+html.jc-platform-mobile .host-list-panel .context-menu-menu .menu-divider {
+  margin: 6px 10px;
+}
+
+/* ========== 21. 终端页：软键盘避让（终端窗口整体保持在键盘之上） ========== */
+/* 键盘弹出时终端不能「被盖住半截」：直接把终端页的高度算成
+   「可视底边（键盘上沿） − 页面区顶部安全区」。
+   页面区（.layout-body）顶部就落在 --jc-mobile-top-inset 处（标题栏已 display:none），
+   可视底边由 utils/mobileKeyboard.ts 写入 --jc-vv-bottom（visualViewport 底边），
+   所以这个高度不依赖 adjustPan / adjustResize 的差别：
+   - 布局没重排（键盘只是盖在上面）→ 终端页收短到键盘上沿；
+   - 布局已随键盘缩小 → 算出的是同一个高度，不会重复扣减。
+   底部导航此时要么被键盘盖住、要么白占一行高度，一并隐藏把高度让给终端。
+   min-height 是兜底：个别机型在键盘动画期间会短暂上报极小的可视高度，
+   不能让终端瞬间塌成一条（与 DockLayout 里的 KB_MIN_LAYER_H 取值一致）。
+   xterm 由 ResizeObserver 监听容器尺寸变化自动 refit，行列随可视高度重算，
+   滚动位置保持，不截断内容。 */
+/* 两种「键盘挡内容」的判定任一命中就隐藏底部导航：
+   jc-kb-open —— mobileKeyboard.ts 的通用判定；jc-kb-avoid —— DockLayout 实测标记（互为备份） */
+html.jc-platform-mobile.jc-kb-open .layout-body.m-body--terminal > .m-tabbar,
+html.jc-platform-mobile.jc-kb-avoid .layout-body.m-body--terminal > .m-tabbar {
+  display: none;
+}
+/* 下面这条只是「精算前的兜底」：实际高度由 DockLayout 用真实几何量出来写成内联样式
+   （内联样式优先级更高）。这里保留是为了键盘刚弹出、rAF 还没跑到的那一帧不至于被盖住 */
+html.jc-platform-mobile.jc-kb-open .m-page-layer--terminal,
+html.jc-platform-mobile.jc-kb-avoid .m-page-layer--terminal {
+  /* 显式 bottom:auto：图层本身是 inset-0（上下都是 0），只写 height 属于「过度约束」，
+     交给浏览器按优先级取舍不够保险，这里直接让高度说了算 */
+  bottom: auto;
+  height: calc(var(--jc-vv-bottom, 100%) - var(--jc-mobile-top-inset));
+  min-height: 120px;
+}
+
+/* ========== 17. 移动端隐藏滚动条 ========== */
+/* style.css 给全局 ::-webkit-scrollbar 设了 8px 宽。Android WebView 一旦自定义滚动条样式，
+   就会从「覆盖式（overlay）」切换为「占位式」滚动条 —— 滚动条本身要占布局宽度，
+   于是内容区右侧凭空多出一条空白带（设置页滚动时最明显）。
+   触摸端滚动不依赖滚动条，这里统一隐藏，同时保证内容仍可正常滚动。
+   （必须放在文件末尾：需覆盖 style.css 里的全局滚动条样式） */
+html.jc-platform-mobile ::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+html.jc-platform-mobile,
+html.jc-platform-mobile * {
+  scrollbar-width: none;
+}
+
+/* ========== 22. 移动端 APP 内手机号登录 ==========
+   仅移动端渲染（CAP.appPhoneLogin 为真时由「我的」页登录按钮拉起），
+   桌面端 OAuth 流程完全不受影响；所有规则以 html.jc-platform-mobile 前缀收敛。 */
+html.jc-platform-mobile .m-phonelogin {
+  display: flex;
+  flex-direction: column;
+  background: var(--jc-bg);
+}
+/* 顶部返回条：返回箭头 + 居中标题 + 右侧占位（保证标题真正居中） */
+html.jc-platform-mobile .m-pl-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--jc-border);
+  background: var(--jc-bg-soft);
+}
+html.jc-platform-mobile .m-pl-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--jc-text);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+html.jc-platform-mobile .m-pl-back:active { background: var(--jc-bg-hover); }
+html.jc-platform-mobile .m-pl-title {
+  flex: 1;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--jc-text);
+}
+html.jc-platform-mobile .m-pl-spacer { width: 36px; }
+
+html.jc-platform-mobile .m-pl-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+html.jc-platform-mobile .m-pl-field { display: flex; flex-direction: column; gap: 8px; }
+html.jc-platform-mobile .m-pl-label { font-size: 14px; color: var(--jc-text-soft); }
+html.jc-platform-mobile .m-pl-inputrow { display: flex; align-items: center; gap: 10px; }
+html.jc-platform-mobile .m-pl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--m-ctl-h, 46px);
+  border: 1px solid var(--jc-border);
+  border-radius: var(--m-ctl-radius, 10px);
+  background: var(--jc-bg-soft);
+  color: var(--jc-text);
+  padding: 0 12px;
+  font-size: 16px;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+html.jc-platform-mobile .m-pl-input:focus { border-color: var(--jc-accent); }
+html.jc-platform-mobile .m-pl-codebtn {
+  flex: none;
+  height: var(--m-ctl-h, 46px);
+  padding: 0 14px;
+  border: 1px solid var(--jc-accent);
+  border-radius: var(--m-ctl-radius, 10px);
+  background: transparent;
+  color: var(--jc-accent);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+html.jc-platform-mobile .m-pl-codebtn:disabled { opacity: 0.5; cursor: not-allowed; }
+html.jc-platform-mobile .m-pl-codebtn:not(:disabled):active {
+  background: color-mix(in srgb, var(--jc-accent) 12%, transparent);
+}
+html.jc-platform-mobile .m-pl-err { font-size: 12px; color: #f87171; }
+html.jc-platform-mobile .m-pl-submit {
+  margin-top: 4px;
+  width: 100%;
+  height: 50px;
+  font-size: 16px;
+  border: none;
+  border-radius: var(--m-ctl-radius, 10px);
+  background: var(--jc-accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+html.jc-platform-mobile .m-pl-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+html.jc-platform-mobile .m-pl-submit:not(:disabled):active { filter: brightness(0.94); }
+html.jc-platform-mobile .m-pl-tip {
+  font-size: 12px;
+  color: var(--jc-text-muted);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ---- 滑块验证码弹窗（复刻 web 端 SlideCaptcha，仅移动端渲染） ---- */
+html.jc-platform-mobile .cap-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+html.jc-platform-mobile .cap-dialog {
+  position: relative;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  background: var(--jc-bg-soft);
+  border: 1px solid var(--jc-border-mid, var(--jc-border));
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+html.jc-platform-mobile .cap-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--jc-text-muted);
+  border-radius: 6px;
+}
+html.jc-platform-mobile .cap-close:hover { background: var(--jc-bg-hover); color: var(--jc-text); }
+html.jc-platform-mobile .cap-title { font-size: 16px; font-weight: 600; color: var(--jc-text); text-align: center; }
+html.jc-platform-mobile .cap-subtitle { font-size: 12px; color: var(--jc-text-muted); text-align: center; margin-top: 4px; }
+html.jc-platform-mobile .cap-stage { margin: 16px 0 12px; }
+html.jc-platform-mobile .cap-image-box {
+  position: relative;
+  width: 310px;
+  max-width: 100%;
+  height: 155px;
+  margin: 0 auto;
+  background: var(--jc-bg-hover);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--jc-border);
+  user-select: none;
+  touch-action: none;
+}
+html.jc-platform-mobile .cap-image-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--jc-text-muted);
+  font-size: 13px;
+}
+html.jc-platform-mobile .cap-bg { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+html.jc-platform-mobile .cap-slider-img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 44px;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+html.jc-platform-mobile .cap-refresh {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  border: none;
+  color: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+}
+html.jc-platform-mobile .cap-refresh:hover { background: rgba(0, 0, 0, 0.65); }
+html.jc-platform-mobile .cap-bar { display: flex; align-items: center; }
+html.jc-platform-mobile .cap-track {
+  position: relative;
+  flex: 1;
+  height: 44px;
+  background: var(--jc-bg-hover);
+  border-radius: 22px;
+  border: 1px solid var(--jc-border);
+  overflow: hidden;
+}
+html.jc-platform-mobile .cap-track.active { border-color: var(--jc-accent); }
+
+/* ---- 20. 文件编辑器（移动端）---- */
+/* 20.1 Tab 栏：触摸端没有 hover，关闭按钮必须常显，否则打开的文件无法关闭；
+   同时把 Tab 做大（高度/字号/关闭按钮），适配手指点按。 */
+html.jc-platform-mobile .editor-overlay .ed-tab {
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+  max-width: 62vw;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+html.jc-platform-mobile .editor-overlay .ed-tab-close {
+  opacity: 1 !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--jc-text);
+  margin-left: 2px;
+}
+html.jc-platform-mobile .editor-overlay .ed-tab-close:active {
+  background: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+}
+/* el-icon 的尺寸是内联 font-size，需 !important 才能盖过 */
+html.jc-platform-mobile .editor-overlay .ed-tab-close .el-icon { font-size: 15px !important; }
+/* 20.2 工具栏：一行放不下时横向滚动，而不是把按钮挤到换行/文字变形（如"保存"竖排） */
+html.jc-platform-mobile .editor-overlay .ed-toolbar {
+  height: 44px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+html.jc-platform-mobile .editor-overlay .ed-toolbar::-webkit-scrollbar { height: 0; display: none; }
+html.jc-platform-mobile .editor-overlay .ed-toolbar .ed-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+html.jc-platform-mobile .editor-overlay .ed-toolbar > span,
+html.jc-platform-mobile .editor-overlay .ed-toolbar .el-select { flex: 0 0 auto; }
+
+/* 20.3 搜索/替换面板：用 flex 重新排版，各行均匀铺满宽度、元素等高不遮挡。
+   DOM 顺序：查找输入框 → 下一个/上一个/全部 → 3 个勾选项 → <br> → 替换输入框 → 替换/全部替换 → 关闭
+   用 order + 两个「整行占位」伪元素强制分成三行：
+     [查找输入框(自适应)   下一个  上一个  全部  ×]
+     [区分大小写   正则   全词]                    ← 靠左，单独一行
+     [替换输入框(自适应)   替换  全部替换]
+   关闭按钮改为行内按钮，与其它按钮同高、同间距。 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 6px;
+  /* 关闭按钮已改为行内按钮（不再绝对定位），无需为它预留右侧空间 */
+  padding: 8px;
+}
+/* 查找/替换输入框：占满该行按钮之外的剩余宽度（消除右侧空档）；
+   同时覆盖主题里的 min-width:180px，否则会把按钮挤下去。
+   注：输入框默认宽度来自 <input> 的 size=20，故需显式 width:auto 交给 flex 计算。 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search input[name=search],
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search input[name=replace] {
+  order: 0;
+  flex: 1 1 80px;
+  width: auto !important;
+  min-width: 0 !important;
+}
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search input[name=replace] { order: 5; }
+/* 按钮：不参与拉伸，保持紧凑的触摸尺寸 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search .cm-button {
+  order: 1;
+  flex: 0 0 auto;
+  padding: 4px 6px !important;
+  margin: 0 !important;
+  font-size: 12px !important;
+}
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search button[name=replace],
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search button[name=replaceAll] { order: 6; }
+/* 面板自带伪元素作「整行占位」→ 强制勾选项另起一行 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search::before {
+  content: "";
+  order: 2;
+  flex-basis: 100%;
+  height: 0;
+}
+/* 第二个「整行占位」→ 强制替换行另起一行。
+   注意：不能依赖 <br>（它作为 flex 项在部分 WebView 里不会真的占满一行，
+   会导致勾选项行与替换行挤在一起互相遮挡），这里用面板 ::after 伪元素代替，<br> 直接隐藏。 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search::after {
+  content: "";
+  order: 4;
+  flex-basis: 100%;
+  height: 0;
+}
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search > br { display: none; }
+/* 三个勾选项：在单独一行内靠左排列；字号略微放大以与复选框高度相称。
+   注意 flex-basis 不能为 0，否则会被同行的其它元素压成 0 宽导致文字相互遮挡。 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search > label {
+  order: 3;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  font-size: 14px !important;
+}
+/* 三个勾选项在该行内靠左排列（间距由容器的 column-gap 提供） */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search > label:first-of-type { margin-left: 0 !important; }
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search > label:last-of-type { margin-right: 0 !important; }
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search > label input[type=checkbox] {
+  flex: 0 0 auto;
+  width: 16px !important;
+  height: 16px !important;
+  margin: 0 6px 0 0 !important;
+}
+/* 关闭按钮：取消绝对定位，改为与「下一个/上一个/全部」同高、同间距的行内按钮，
+   排在「全部」之后（order 与按钮相同 → 按 DOM 顺序自然排在最后）。 */
+html.jc-platform-mobile .editor-overlay .cm-panel.cm-search [name=close] {
+  position: static;
+  order: 1;
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: 32px;
+  height: 28px !important;
+  padding: 0 8px !important;
+  margin: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 15px !important;
+  background: var(--jc-bg-hover);
+  border: 1px solid var(--jc-border);
+  border-radius: 4px;
+  color: var(--jc-text);
+}
+html.jc-platform-mobile .cap-track-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--jc-accent) 28%, transparent);
+  transition: width 0.05s linear;
+}
+html.jc-platform-mobile .cap-track-tip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--jc-text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+html.jc-platform-mobile .cap-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--jc-accent);
+  color: #0a0a0f;
+  border-radius: 50%;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: transform 0.05s linear;
+}
+html.jc-platform-mobile .cap-handle:active { cursor: grabbing; }
+html.jc-platform-mobile .cap-handle.disabled { opacity: 0.5; cursor: not-allowed; }
+html.jc-platform-mobile .cap-error { margin-top: 10px; font-size: 12px; color: #f87171; text-align: center; }
+html.jc-platform-mobile .cap-stage.shake { animation: cap-shake 0.4s; }
+@keyframes cap-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+html.jc-platform-mobile .cap-fade-enter-active,
+html.jc-platform-mobile .cap-fade-leave-active { transition: opacity 0.18s; }
+html.jc-platform-mobile .cap-fade-enter-from,
+html.jc-platform-mobile .cap-fade-leave-to { opacity: 0; }

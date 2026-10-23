@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      viewport-fit=cover 是移动端安全区适配的前提（尤其 iOS）：
+      缺它时 iOS WebKit 会把页面缩进到安全区内 → 底部/顶部出现黑边，
+      且 env(safe-area-inset-*) 恒为 0，styles/mobile.css 的兜底值就会被误用。
+      加上后页面铺满全屏，env() 才会返回真实安全区（iPhone 底部手势条约 34px），
+      由 mobile.css 统一用它做内边距 —— Android/华为 env() 为 0，走兜底值，行为不变。
+    -->
+    <!--
+      maximum-scale / minimum-scale / user-scalable=no：移动端禁止页面缩放。
+      iOS WKWebView 在「输入框字体 < 16px」时聚焦会自动放大整页 → 页面超出屏幕；
+      这里从根上禁用缩放。桌面 WebView2 不解析移动端 viewport 缩放参数，行为零变化。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>JC Shell</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

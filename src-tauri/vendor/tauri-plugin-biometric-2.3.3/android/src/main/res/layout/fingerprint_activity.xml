@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「只认指纹」提示页（JC Shell fork 扩展）。
+     FingerprintManager 不提供任何 UI，只能自绘；这里用「半透明遮罩 + 白色卡片」，
+     深浅色主题下都能看清，且不依赖宿主应用的主题资源。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#80000000">
+
+    <LinearLayout
+        android:layout_width="280dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:background="#FFFFFF"
+        android:padding="22dp">
+
+        <TextView
+            android:id="@+id/fp_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:textColor="#111111"
+            android:text="请使用指纹验证" />
+
+        <TextView
+            android:id="@+id/fp_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textSize="13sp"
+            android:textColor="#666666" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textSize="13sp"
+            android:textColor="#666666"
+            android:text="请将手指放在指纹传感器上" />
+
+        <Button
+            android:id="@+id/fp_cancel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="取消" />
+    </LinearLayout>
+</FrameLayout>

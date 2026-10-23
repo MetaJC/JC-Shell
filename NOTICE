@@ -1,0 +1,46 @@
+JC Shell Community Edition
+Copyright 2024-2026 OpenJC (https://www.openjc.cc)
+
+This product is licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------------
+
+Third-party components bundled with this product retain their original
+licenses. The majority are MIT, Apache-2.0, or BSD licensed. Notable
+bundled components include:
+
+  - Tauri (BSD-3-Clause)
+  - Vue 3 (MIT)
+  - Vite (MIT)
+  - xterm.js (MIT)
+  - CodeMirror 6 (MIT)
+  - russh / russh-sftp (Apache-2.0 OR MIT)
+  - sqlx (MIT OR Apache-2.0)
+  - keyring (Apache-2.0 OR MIT)
+
+This product also bundles modified source versions of the following crates,
+which are included under the "vendor/" directory and licensed as noted:
+
+  - russh-cryptovec        (Apache-2.0)
+  - tauri-plugin-biometric (Apache-2.0 OR MIT)
+
+See each project's repository for its specific license and copyright notices.
+
+------------------------------------------------------------------------------
+
+Trademark notice:
+
+The name "JC Shell" and the JC Shell logo are trademarks of OpenJC and are
+NOT licensed under the Apache License, Version 2.0. Use of the name or logo
+is subject to OpenJC's trademark policy and requires prior permission.
+
+------------------------------------------------------------------------------
+
+Brand and attribution:
+
+The project is known as "JC Shell" (also written "JC-Shell" / "JCShell"),
+developed and copyrighted by OpenJC. Official site: https://www.openjc.cc
+(also referred to as openjc.cc / www.openjc.cc / Open-JC).

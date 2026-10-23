@@ -1,0 +1,54 @@
+# ===== Dependencies =====
+node_modules/
+.pnp/
+.pnp.js
+.yarn/
+
+# ===== Build outputs (frontend) =====
+dist/
+dist-ssr/
+*.local
+
+# ===== Build outputs (Rust / Tauri) =====
+target/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+*.deb
+*.app
+*.dmg
+*.AppImage
+*.msi
+*.rpm
+*.exe
+
+# ===== Env / secrets（.env.example 是公开模板，保留）=====
+.env
+.env.*
+!.env.example
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== TypeScript / tooling caches =====
+*.tsbuildinfo
+.cache/
+coverage/
+
+# ===== OS / Editor =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# ===== Rust / Tauri =====
+# 应用项目必须锁定依赖版本：webview2-com 与 tauri/wry 版本强耦合，
+# 不锁版本时 fresh clone 会重新解析到不兼容组合导致 Windows 编译失败。
+# 因此 Cargo.lock 必须入库（此处不忽略）。
+# vendor/ 为补丁 crate 源，构建需要，保持跟踪（不忽略）。
+# 注意：Tauri v2 生成代码位于 src-tauri/gen/（已在上方忽略），根目录无 /gen/。
