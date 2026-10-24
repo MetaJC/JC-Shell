@@ -78,7 +78,7 @@ JC Shell 是一款面向运维工程师、后端开发者和个人站长的跨�
 
 | 平台 | 获取方式 |
 |---|---|
-| Windows | [Gitee Releases](https://gitee.com/Open-JC/jc-shell-community/releases) （国内推荐）/ [GitHub Releases](https://github.com/MetaJC/JC-Shell-Community/releases) |
+| Windows | [Gitee Releases](https://gitee.com/Open-JC/jc-shell/releases) （国内推荐）/ [GitHub Releases](https://github.com/MetaJC/JC-Shell/releases) |
 | macOS | 同上 |
 | Linux | 同上（deb / rpm / AppImage） |
 | Android | 同上（APK） |
@@ -211,7 +211,7 @@ JC Shell Community Edition 以 **Apache License 2.0** 发布（完整文本见�
 您可以自由地使用、复制、修改、二次开发本项目，也可用于商用目的。在享受开源便利的同时，也请大家共同维护开源社区的良好环境，并遵循开源协议中的相关要求：
 
 - 请尊重开源劳动成果，保留源码和分发文件中的原始版权声明
-- 请在项目介绍、关于页面注明"本项目基于 [JC Shell](https://gitee.com/Open-JC/jc-shell-community) 开发"
+- 请在项目介绍、关于页面注明"本项目基于 [JC Shell](https://gitee.com/Open-JC/jc-shell) 开发"
 - 请勿将本项目用于任何非法用途，相关责任由使用者自行承担
 
 本项目品牌与名称：JC Shell / JC-Shell / JCShell
@@ -225,4 +225,4 @@ JC Shell Community Edition 以 **Apache License 2.0** 发布（完整文本见�
 
 - 官网：<https://www.openjc.cc/jc-shell>
 - 使用文档：<https://www.openjc.cc/doc/projects/jc-shell>
-- 问题反馈：<https://github.com/MetaJC/JC-Shell-Community/issues>
+- 问题反馈：<https://github.com/MetaJC/JC-Shell/issues>

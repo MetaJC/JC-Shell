@@ -773,8 +773,8 @@ const version = ref(
 const build = ref('20260822.1')
 const website = ref('https://www.openjc.cc/jc-shell')
 const docsUrl = ref('https://docs.openjc.cc')
-const feedbackUrl = ref('https://github.com/openjc/jc-shell/issues')
-const sourceUrl = ref('https://gitee.com/Open-JC/jc-shell-community')
+const feedbackUrl = ref('https://github.com/MetaJC/JC-Shell/issues')
+const sourceUrl = ref('https://gitee.com/Open-JC/jc-shell')
 const checking = ref(false)
 /** 检查更新：走 Rust UpdateService（manual 模式必弹窗，与所有入口一致；不再用 tip 提示） */
 async function checkUpdate(): Promise<void> {

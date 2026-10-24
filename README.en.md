@@ -57,7 +57,7 @@ synced across desktop and mobile, so you can manage your servers from anywhere.
 
 | Platform | Where |
 |---|---|
-| Windows / macOS / Linux | [Gitee Releases](https://gitee.com/Open-JC/jc-shell-community/releases) (recommended in China) / [GitHub Releases](https://github.com/MetaJC/JC-Shell-Community/releases) |
+| Windows / macOS / Linux | [Gitee Releases](https://gitee.com/Open-JC/jc-shell/releases) (recommended in China) / [GitHub Releases](https://github.com/MetaJC/JC-Shell/releases) |
 | Android | Same as above (APK) |
 | iOS | App Store |
 
@@ -200,4 +200,4 @@ Derivative developers are encouraged (but not required) to indicate
 
 - Website: <https://www.openjc.cc/jc-shell>
 - Docs: <https://docs.openjc.cc>
-- Issues: <https://github.com/MetaJC/JC-Shell-Community/issues>
+- Issues: <https://github.com/MetaJC/JC-Shell/issues>

@@ -79,7 +79,10 @@
                                                 "installerIcon":  "icons/icon.ico",
                                                 "installMode":  "currentUser",
                                                 "installerHooks":  "windows/hooks.nsh"
-                                            }
+                                            },
+                                            "wix":  {
+                                                       "language":  "zh-CN"
+                                                   }
                                },
                    "macOS":  {
                                   "minimumSystemVersion":  "10.15",
