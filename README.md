@@ -85,6 +85,8 @@ JC Shell 是一款面向运维工程师、后端开发者和个人站长的跨�
 | iOS | App Store |
 
 > 官网：<https://www.openjc.cc/jc-shell> ｜ 使用文档：<https://docs.openjc.cc>
+>
+> 代码签名：Windows 安装包的代码签名由 [SignPath Foundation](https://signpath.org/) 免费提供。
 
 ## 从源码构建
 
