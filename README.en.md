@@ -24,6 +24,14 @@ Windows · macOS · Linux · Android · iOS
 
 ## Introduction
 
+<div style="display:inline-block;padding:20px 40px;background:#1a1a2e;border-radius:8px;">
+  <span style="font-size:44px;font-weight:900;color:#ffffff;letter-spacing:4px;text-align:center;text-shadow:0 0 20px rgba(100,180,255,0.6);">Free · Open Source · Commercial-OK · Redistributable</span>
+</div>
+
+<p align="center">
+  <img src="src/assets/gif/agent-demo.gif" alt="JC Shell · terminal + file system sync demo" width="600" />
+</p>
+
 JC Shell is a cross-platform SSH client for ops engineers, backend developers and
 self-hosters. It combines a remote terminal, a graphical file manager, server
 monitoring and an AI ops assistant into a single app — one account, one host list,
@@ -35,10 +43,6 @@ synced across desktop and mobile, so you can manage your servers from anywhere.
 - **Cross-platform** — Windows / macOS / Linux desktop + Android / iOS mobile
 - **Intelligent** — the AI assistant turns natural language into executable
   commands, with every step visible and interruptible
-
-<p align="center">
-  <img src="docs/images/agent-demo.gif" alt="JC Shell · terminal + file system sync demo" width="600" />
-</p>
 
 ## Features
 
@@ -54,6 +58,26 @@ synced across desktop and mobile, so you can manage your servers from anywhere.
 | AI assistant | Natural-language commands, step-by-step execution, interrupt anytime, auto mirror fallback on stalled downloads |
 | Account sync | Phone login, host config cloud sync (passwords excluded) |
 | Extras | System tray, auto update, EN/中文, dark/light themes, biometric unlock (mobile) |
+
+## Interface Demonstration
+<table>
+  <tr>
+    <td align="center"><img src="src/assets/images/main.png" width="420" />Main interface</td>
+    <td align="center"><img src="src/assets/images/SFTP.png" width="420" />SFTP</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="src/assets/images/PortFordMain.png" width="420" />Port Forwarding - Initial Page</td>
+    <td align="center"><img src="src/assets/images/PortForwardList.png" width="420" />Port Forwarding - List Page</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="src/assets/images/PortFordDenimic.png" width="420" />Create port forwarding rules</td>
+    <td align="center"><img src="src/assets/images/MultiScreen.png" width="420" />Compact Mode - Split-Screen Mode</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="src/assets/images/CardMange.png" width="420" />Card Management (Extensible)</td>
+    <td align="center"><img src="src/assets/images/Settings.png" width="420" />Settings page</td>
+  </tr>
+</table>
 
 ## Download
 
@@ -200,8 +224,11 @@ JC Shell Community Edition is released under the **Apache License 2.0**.
 Derivative developers are encouraged (but not required) to indicate
 "based on JC Shell" in their distribution and UI.
 
+The JC Shell brand and name are copyrighted by OpenJC © 2024-2026.
+Website: https://www.openjc.cc
+
 ## Links
 
 - Website: <https://www.openjc.cc/jc-shell>
-- Docs: <https://docs.openjc.cc>
+- Docs: <https://www.openjc.cc/doc/projects/jc-shell>
 - Issues: <https://github.com/MetaJC/JC-Shell/issues>
