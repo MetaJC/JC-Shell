@@ -87,7 +87,7 @@ synced across desktop and mobile, so you can manage your servers from anywhere.
 | Android | Same as above (APK) |
 | iOS | App Store |
 
-> Website: <https://www.openjc.cc/jc-shell> ｜ Docs: <https://docs.openjc.cc>
+> Website: <https://www.openjc.cc/jc-shell> ｜ Docs: <https://www.openjc.cc/doc/projects/jc-shell>
 >
 > Code signing: Windows installers are signed free of charge by the [SignPath Foundation](https://signpath.org/).
 

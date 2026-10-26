@@ -772,7 +772,7 @@ const version = ref(
 )
 const build = ref('20260822.1')
 const website = ref('https://www.openjc.cc/jc-shell')
-const docsUrl = ref('https://docs.openjc.cc')
+const docsUrl = ref('https://www.openjc.cc/doc/projects/jc-shell')
 const feedbackUrl = ref('https://github.com/MetaJC/JC-Shell/issues')
 const sourceUrl = ref('https://gitee.com/Open-JC/jc-shell')
 const checking = ref(false)
