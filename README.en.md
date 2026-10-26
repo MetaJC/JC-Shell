@@ -1,3 +1,5 @@
+English | [简体中文](README.md)
+
 <div align="center">
 
 <img src="src/assets/logo.png" alt="JC Shell" width="120" />
