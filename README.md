@@ -135,7 +135,7 @@ npm run tauri:ios:init
 本仓库（社区版）完整目录结构（被 `.gitignore` 忽略的构建产物不列出）：
 
 ```
-jc-shell-community/
+jc-shell/
 ├── src/                          # Vue 3 + TypeScript 前端
 │   ├── api/                      # Tauri IPC 封装（前端调用 Rust 命令的桥接层）
 │   ├── assets/                   # 静态资源（logo.png、jc-shell-logo.png）

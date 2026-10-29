@@ -138,7 +138,7 @@ npm run tauri:ios:init
 Top-level files and directories of this repository (Community Edition); build artifacts ignored by `.gitignore` are omitted:
 
 ```
-jc-shell-community/
+jc-shell/
 ├── src/                          # Vue 3 + TypeScript frontend
 │   ├── api/                      # Tauri IPC wrappers (bridge to Rust commands)
 │   ├── assets/                   # static assets (logo.png, jc-shell-logo.png)
